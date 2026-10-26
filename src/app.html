@@ -332,6 +332,32 @@ ol.howto{padding-left:1.3em;margin:8px 0;display:grid;gap:6px}
 .gedit:focus{border-color:var(--accent-ink);outline:none;background:var(--card)}
 .editrow.done .gedit{color:var(--muted)}
 
+/* app feel */
+html{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+body{overscroll-behavior-y:none}
+button,.tabs,.chip,.btn{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.splash{min-height:70vh;display:grid;place-content:center;justify-items:center;gap:14px}
+.splash img{border-radius:22px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.splash b{font-family:var(--display);font-weight:var(--display-weight);font-size:1.5rem}
+@media (prefers-reduced-motion:no-preference){.splash{animation:fadein .5s ease-out}@keyframes fadein{from{opacity:0;transform:scale(.97)}}}
+.offline{background:var(--ink);color:var(--bg);border-radius:var(--radius-sm);padding:10px 14px;font-size:.9rem;font-weight:700;margin-bottom:12px}
+.warnbox{border-color:#c98a00;background:color-mix(in srgb, #ffb81f 18%, var(--card))}
+.ubar{display:grid;gap:5px}
+.ubar-h{display:flex;justify-content:space-between;gap:10px;font-size:.88rem}
+.ubar-h span{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.ubar-t{height:10px;border-radius:6px;background:var(--line);overflow:hidden}
+.ubar-t i{display:block;height:100%;border-radius:6px;background:var(--accent)}
+.ubar.warn .ubar-t i{background:#e0a100}
+.ubar.bad .ubar-t i{background:var(--danger)}
+.uhist{list-style:none;margin:0;padding:0;display:grid;gap:4px;font-size:.85rem;font-variant-numeric:tabular-nums}
+.uhist li{display:grid;grid-template-columns:3.5em 1fr auto;gap:10px;color:var(--muted)}
+.adbar.off{display:none}
+.adbar{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 61px);z-index:18;height:50px;background:var(--card);border-top:1.5px solid var(--line);overflow:hidden;display:flex;justify-content:center}
+body.has-ad .fab{bottom:calc(env(safe-area-inset-bottom,0px) + 126px)}
+body.has-ad .wrap{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+body.has-ad .selbar{bottom:calc(env(safe-area-inset-bottom,0px) + 112px)}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.18s}
+
 /* tab bar */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1.5px solid var(--line);
   display:grid;grid-template-columns:repeat(4,1fr);padding-bottom:env(safe-area-inset-bottom,0px);
@@ -397,7 +423,8 @@ ol.howto{padding-left:1.3em;margin:8px 0;display:grid;gap:6px}
 </style>
 </head>
 <body>
-<div class="wrap" id="app"><div class="empty"><h2>Opening the recipe box…</h2></div></div>
+<div class="wrap" id="app"><div class="splash"><img src="/icon-180.png" alt="" width="84" height="84"><b>Recipe Box</b></div></div>
+<div class="adbar" id="adbar" hidden aria-label="Advertisement"></div>
 <button class="btn primary fab" id="fab" hidden>+ Add recipe</button>
 <nav class="tabs" id="tabs" hidden aria-label="Sections">
   <button data-tab="recipes"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/><path d="M9 8h6"/></svg>Recipes</button>
@@ -421,13 +448,68 @@ const S = {
   imp: { url: "", text: "", busy: "", msg: "", err: false, source_url: "" },
   authMode: "login", authMsg: ""
 };
-let INVITE = null; try { INVITE = new URLSearchParams(location.search).get("invite"); } catch {}
-if (INVITE) S.authMode = "signup";
+let INVITE = null, START = null;
+try { const q = new URLSearchParams(location.search); INVITE = q.get("invite"); START = q.get("start"); } catch {}
+if (INVITE || START) S.authMode = "signup";
 const app = document.getElementById("app"), fab = document.getElementById("fab"), tabs = document.getElementById("tabs");
+
+/* ---------- banner ad (only when AdSense is set up) ---------- */
+let adsLoaded = false;
+function setupAds(){
+  const box = document.getElementById("adbar");
+  if (!S.ads) { box.hidden = true; document.body.classList.remove("has-ad"); return; }
+  if (!adsLoaded) {
+    adsLoaded = true;
+    const sc = document.createElement("script"); sc.async = true; sc.crossOrigin = "anonymous";
+    sc.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=" + encodeURIComponent(S.ads.client);
+    document.head.appendChild(sc);
+    box.innerHTML = `<ins class="adsbygoogle" style="display:block;width:100%;height:50px" data-ad-client="${esc(S.ads.client)}" data-ad-slot="${esc(S.ads.slot)}" data-full-width-responsive="false"></ins>`;
+    try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch {}
+  }
+  box.hidden = false; document.body.classList.add("has-ad");
+}
+
+/* ---------- free plan usage (owner only) ---------- */
+const fmtN = n => n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : n >= 1e3 ? Math.round(n / 1e3) + " KB" : String(n);
+function usageSummary(){
+  const u = S.usage; if (!u) return "Today's use of Cloudflare's free limits";
+  const worst = Math.max(u.pct.requests, u.pct.neurons, u.pct.dbsize);
+  return worst >= .7 ? "⚠ " + Math.round(worst * 100) + "% of a free limit used" : "All well under the free limits";
+}
+function usageHtml(){
+  const u = S.usage;
+  if (!u) return `<p class="small muted" style="margin:0"><span class="spinner"></span> Loading…</p>`;
+  const bar = (label, val, max, pct, note) => `<div class="ubar ${pct >= .9 ? "bad" : pct >= .7 ? "warn" : ""}"><div class="ubar-h"><b>${label}</b><span>${note}</span></div><div class="ubar-t"><i style="width:${Math.min(100, Math.max(1.5, pct * 100)).toFixed(1)}%"></i></div></div>`;
+  const days = (S.usageWeek && S.usageWeek.days) || [];
+  const byDay = {}; days.forEach(r => { (byDay[r.day] ||= {})[r.key] = r.n; });
+  const hist = Object.keys(byDay).sort().slice(-7).map(d => `<li><span>${new Date(d + "T12:00Z").toLocaleDateString(undefined, { weekday: "short" })}</span><span>${Math.round(byDay[d].requests || 0).toLocaleString()} visits</span><span>${Math.round(byDay[d].ai_calls || 0)} AI ${Math.round(byDay[d].ai_calls || 0) === 1 ? "read" : "reads"}</span></li>`).join("");
+  return `<p class="small muted" style="margin:0">Today so far. The visit and AI limits reset every day at ${new Date(Date.UTC(2026, 0, 1)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} your time.</p>
+    ${bar("App visits", u.requests, 100000, u.pct.requests, `${u.requests.toLocaleString()} of 100,000`)}
+    ${bar("AI recipe reading", u.neurons, 10000, u.pct.neurons, `${Math.round(u.pct.neurons * 100)}% · ${u.imports} ${u.imports === 1 ? "read" : "reads"}`)}
+    ${bar("Storage", u.dbsize, 5e9, u.pct.dbsize, `${fmtN(u.dbsize)} of 5 GB`)}
+    ${hist ? `<div class="cook-h">Last 7 days</div><ul class="uhist">${hist}</ul>` : ""}
+    <p class="hint" style="margin:0">Counts are close estimates kept by the app itself. Over a limit, that feature pauses until the reset; nothing is ever charged. You'll see a warning on the Recipes screen at 70%.</p>`;
+}
+function usageBanner(){
+  const u = S.usage; if (!S.me || !S.me.is_admin || !u) return "";
+  const hot = [["app visits", u.pct.requests], ["AI recipe reading", u.pct.neurons], ["storage", u.pct.dbsize]].filter(([, p]) => p >= .7);
+  if (!hot.length) return "";
+  return `<div class="news warnbox" role="status"><div><b>Getting close to a free limit</b><span>${hot.map(([k, p]) => `${k}: ${Math.round(p * 100)}%`).join(" · ")}</span></div><button class="btn" data-act="usagego">See usage</button></div>`;
+}
 
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.0", items: [
+    "Separate households: share Recipe Box with friends and family, each with their own private recipes and lists",
+    "Name your household on the Me tab",
+    "Timer alerts on your lock screen, even when you leave the app (turn on under Me → Timer sound)",
+    "Works offline: recipes you've opened stay readable with no signal",
+    "Instagram and Facebook links now try harder to read the full caption",
+    "Import up to 6 screenshots at once for long captions",
+    "Feels more like an app: launch screen, no accidental zooming or page bounce, smoother tab changes",
+    "A privacy page, linked from the Me tab"
+  ] },
   { version: "2.2", items: [
     "On the grocery list, Select is now Edit: fix an item's name right in the list",
     "You can also rename an item from its store tag panel"
@@ -537,6 +619,9 @@ const photoUrl = id => (window.PREVIEW_PHOTOS && window.PREVIEW_PHOTOS[id]) || "
 const imgFor = r => r.photo_id ? "/photo/" + encodeURIComponent(r.photo_id) : (r.image_url || "");
 const personName = id => id === S.me?.id ? "you" : (S.people[id] || "");
 
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});
+window.addEventListener("online", () => { if (S.offline) { S.offline = false; boot(); } });
+window.addEventListener("offline", () => { S.offline = true; if (S.tab === "recipes" && S.view === "list") renderList(); });
 async function api(path, opts = {}) {
   const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin" };
   if (opts.body instanceof Blob) { init.body = opts.body; init.headers["content-type"] = opts.body.type || "application/octet-stream"; }
@@ -544,6 +629,8 @@ async function api(path, opts = {}) {
   let res;
   try { res = await fetch(path, init); } catch { throw new Error("No connection. Check your internet and try again."); }
   let data = {}; try { data = await res.json(); } catch {}
+  if (res.headers.get("x-offline")) { S.offline = true; if (data && typeof data === "object" && !Array.isArray(data)) data._offline = true; }
+  else if (init.method === "GET" && path.startsWith("/api/")) S.offline = false;
   if (res.status === 401 && !path.startsWith("/api/login") && !path.startsWith("/api/signup") && !path.startsWith("/api/reset")) { S.me = null; renderAuth(); throw new Error("Please log in."); }
   if (!res.ok) throw new Error(data.error || "Something went wrong (" + res.status + ").");
   return data;
@@ -586,8 +673,10 @@ const baseServings = r => { const m = String(r.servings || "").match(/\d+/); ret
 async function boot(){
   try {
     const me = await api("/api/me");
-    if (INVITE) { INVITE = null; try { history.replaceState(null, "", location.pathname); } catch {} }
+    if (INVITE || START) { INVITE = START = null; try { history.replaceState(null, "", location.pathname); } catch {} }
     S.me = me.user; S.ai = me.ai; S.version = me.version; S.deployed = me.deployed || {}; S.people = Object.fromEntries(me.people.map(p => [p.id, p.name]));
+    S.household = me.household; S.usage = me.usage || null; S.ads = me.ads || null; S.vapid = me.vapid || null; S.offline = !!me._offline;
+    setupAds(); checkPush();
     await Promise.all([loadRecipes(), loadGrocery()]);
     tabs.hidden = false; render();
   } catch (e) { if (S.me === null) renderAuth(); else { app.innerHTML = `<div class="empty"><h2>Couldn't open the recipe box</h2><p>${esc(e.message)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`; } }
@@ -617,7 +706,7 @@ function renderAuth(){
         ${S.authMsg ? `<div class="msg err">${esc(S.authMsg)}</div>` : ""}
         <button class="btn primary block" id="r-go">Set new password and log in</button>
         <button type="button" class="btn ghost block" data-auth="login">Back to log in</button>
-        <p class="hint" style="margin:0">Everyone locked out? Create a new account with the household code. All recipes and lists are shared, so nothing is lost.</p>
+        <p class="hint" style="margin:0">Everyone in your household locked out? Ask whoever invited you to send a new invite link. Your recipes stay safe in the meantime.</p>
       </div></form>
     </div>`;
     document.getElementById("resetf").addEventListener("submit", async e => {
@@ -634,19 +723,27 @@ function renderAuth(){
     S.inviteInfo = null;
     fetch("/api/invite-info?token=" + encodeURIComponent(INVITE)).then(r => r.json()).then(d => { S.inviteInfo = d; if (!S.me) renderAuth(); }).catch(() => { S.inviteInfo = { valid: false }; });
   }
+  if (START && S.starterInfo === undefined) {
+    S.starterInfo = null;
+    fetch("/api/starter-info?token=" + encodeURIComponent(START)).then(r => r.json()).then(d => { S.starterInfo = d; if (!S.me) renderAuth(); }).catch(() => { S.starterInfo = { valid: false }; });
+  }
   const inv = INVITE && S.inviteInfo && S.inviteInfo.valid;
+  const st = START && S.starterInfo && S.starterInfo.valid;
   app.innerHTML = `
     <div class="auth">
       <div class="eyebrow">Our kitchen</div>
       <h1 style="font-size:2.6rem;margin:4px 0 16px">Recipe Box</h1>
-      ${inv && signup ? `<div class="msg" style="margin-bottom:14px"><b>${esc(S.inviteInfo.inviter)} invited you to join</b><br><span class="small">Make your account below. You'll share the same recipes, grocery list and meal plan.</span></div>` : ""}
+      ${inv && signup ? `<div class="msg" style="margin-bottom:14px"><b>${esc(S.inviteInfo.inviter)} invited you to join${S.inviteInfo.household ? " " + esc(S.inviteInfo.household) : ""}</b><br><span class="small">Make your account below. You'll share the same recipes, grocery list and meal plan.</span></div>` : ""}
+      ${st && signup ? `<div class="msg" style="margin-bottom:14px"><b>${esc(S.starterInfo.inviter)} set you up with your own Recipe Box</b><br><span class="small">Make your account and name your household. Your recipes and lists are private to your household. Invite your family from the Me tab afterwards.</span></div>` : ""}
+      ${START && S.starterInfo && !S.starterInfo.valid && signup ? `<div class="msg err" style="margin-bottom:14px">This link has expired or was already used. Ask for a new one.</div>` : ""}
       ${INVITE && S.inviteInfo && !S.inviteInfo.valid && signup ? `<div class="msg err" style="margin-bottom:14px">This invite link has expired or was already used. Ask for a new one, or enter the household code below.</div>` : ""}
       <div class="seg"><button data-auth="login" aria-pressed="${!signup}">Log in</button><button data-auth="signup" aria-pressed="${signup}">Create account</button></div>
       <form class="card" id="authf"><div class="card-body form">
         ${signup ? `<div class="field"><label for="a-name">Your name</label><input id="a-name" autocomplete="name" required></div>` : ""}
+        ${signup && st ? `<div class="field"><label for="a-hh">Household name</label><input id="a-hh" placeholder="The Smith family" maxlength="60" required></div>` : ""}
         <div class="field"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" autocapitalize="off" required></div>
         <div class="field"><label for="a-pw">Password</label><input id="a-pw" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="${signup ? 8 : 1}" required>${signup ? `<span class="hint">At least 8 characters.</span>` : ""}</div>
-        ${signup && !inv ? `<div class="field"><label for="a-inv">Household code</label><input id="a-inv" autocapitalize="off" autocomplete="off" required><span class="hint">The code set when the app was installed. It keeps strangers out.</span></div>` : ""}
+        ${signup && !inv && !st ? `<div class="field"><label for="a-inv">Household code</label><input id="a-inv" autocapitalize="off" autocomplete="off" required><span class="hint">The code set when the app was installed. It keeps strangers out.</span></div>` : ""}
         ${S.authMsg ? `<div class="msg err">${esc(S.authMsg)}</div>` : ""}
         <button class="btn primary block" id="a-go">${signup ? "Create account" : "Log in"}</button>
         ${signup ? "" : `<button type="button" class="btn ghost block" data-auth="reset">Forgot password?</button>`}
@@ -657,7 +754,7 @@ function renderAuth(){
     const b = document.getElementById("a-go"); b.disabled = true;
     const v = id => document.getElementById(id)?.value || "";
     try {
-      if (signup) await api("/api/signup", { method: "POST", body: { name: v("a-name"), email: v("a-email"), password: v("a-pw"), invite: v("a-inv"), inviteToken: inv ? INVITE : undefined } });
+      if (signup) await api("/api/signup", { method: "POST", body: { name: v("a-name"), email: v("a-email"), password: v("a-pw"), invite: v("a-inv"), inviteToken: inv ? INVITE : undefined, starterToken: st ? START : undefined, householdName: v("a-hh") } });
       else await api("/api/login", { method: "POST", body: { email: v("a-email"), password: v("a-pw") } });
       if (signup) S.justJoined = true;
       S.authMsg = ""; app.innerHTML = `<div class="empty"><h2>Opening the recipe box…</h2></div>`; boot();
@@ -679,7 +776,11 @@ function render(){
   if (S.view === "import") return renderImport();
   renderList();
 }
-function go(tab){ S.tab = tab; S.gSel = null; S.iSel = null; if (tab === "recipes") { S.view = "list"; } window.scrollTo(0,0); if (tab === "plan") { loadPlan().then(render).catch(e => toast(e.message)); } render(); }
+function go(tab){
+  const run = () => goNow(tab);
+  if (document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches && tab !== S.tab) document.startViewTransition(run); else run();
+}
+function goNow(tab){ S.tab = tab; S.gSel = null; S.iSel = null; if (tab === "recipes") { S.view = "list"; } window.scrollTo(0,0); if (tab === "plan") { loadPlan().then(render).catch(e => toast(e.message)); } render(); }
 tabs.addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) go(b.dataset.tab); });
 
 /* ---------- recipes list ---------- */
@@ -704,6 +805,8 @@ function renderList(){
     return `<div class="tile ${i % 3 === 1 ? "alt" : ""}" role="button" tabindex="0" data-open="${esc(r.id)}" data-lp="r:${esc(r.id)}"><div class="tile-img">${pic}</div><button class="star ${r.favorite?"on":""}" data-fav="${esc(r.id)}" aria-label="${r.favorite?"Remove from favorites":"Mark as favorite"}">★</button><div class="t">${esc(r.title)}</div>${meta ? `<div class="meta">${esc(meta)}</div>` : ""}</div>`;
   }).join("")}</div>`;
   app.innerHTML = `
+    ${S.offline ? `<div class="offline" role="status">You're offline. Showing the recipes saved on this phone.</div>` : ""}
+    ${usageBanner()}
     ${newsBanner()}
     <div class="top"><div><div class="eyebrow">Our kitchen</div><h1>Recipe Box</h1></div><div class="count">${S.recipes.length} ${S.recipes.length===1?"recipe":"recipes"}</div></div>
     ${S.recipes.length ? `<input id="q" class="search" type="search" placeholder="Search recipes or ingredients" value="${esc(S.q)}" aria-label="Search recipes">
@@ -863,11 +966,11 @@ function openCook(){
   const r = S.recipes.find(x => x.id === S.id); if (!r) return;
   cook = { rid: r.id, i: 0, items: cookItems(r), dir: 1 };
   unlockAudio();
-  cookEl.hidden = false; document.body.style.overflow = "hidden";
+  cookEl.hidden = false; document.body.style.overflow = "hidden"; document.getElementById("adbar").classList.add("off");
   grabWake(); renderCook();
 }
 function closeCook(){
-  cook = null; cookEl.hidden = true; cookEl.innerHTML = ""; document.body.style.overflow = ""; tickTimers();
+  cook = null; cookEl.hidden = true; cookEl.innerHTML = ""; document.body.style.overflow = ""; document.getElementById("adbar").classList.remove("off"); tickTimers();
   try { cookWake && cookWake.release(); } catch {} cookWake = null;
 }
 function cookGo(d){
@@ -980,12 +1083,16 @@ function unlockAudio(){ makeSounds(); try { if (navigator.audioSession) navigato
 const chirp = () => playSound("chirp");
 function startTimer(secs, name, step){
   unlockAudio(); chirp();
-  timers.push({ id: Math.random().toString(36).slice(2), name: name || ("Step " + step), step, end: Date.now() + secs * 1000, done: false });
+  const t = { id: Math.random().toString(36).slice(2), name: name || ("Step " + step), step, end: Date.now() + secs * 1000, done: false };
+  timers.push(t);
+  if (pushReady()) api("/api/push/timer", { method: "POST", body: { fire_at: t.end, title: "⏰ " + t.name, body: "Timer done" + (cook ? " · " + ((S.recipes.find(r => r.id === cook.rid) || {}).title || "") : "") } }).then(r => { t.pushId = r.id; }).catch(() => {});
   if (!timerTick) timerTick = setInterval(tickTimers, 500);
   tickTimers(); toast("Timer started: " + (name || "Step " + step));
 }
 function tickTimers(){
   const now = Date.now();
+  // app is open and on screen: the in-app alarm will ring, so skip the lock-screen alert
+  if (document.visibilityState === "visible") timers.forEach(t => { if (!t.done && t.end - now < 4000) cancelPushTimer(t); });
   timers.forEach(t => { if (!t.done && t.end <= now) { t.done = true; t.lastRing = 0; toast("⏰ " + t.name + " is done"); } });
   const ringing = timers.some(t => t.done);
   if (ringing && (!sounds || sounds.mode !== "alarm" || sounds.el.paused)) playSound("alarm");
@@ -1002,7 +1109,8 @@ function tickTimers(){
 }
 const ftimers = document.createElement("div");
 ftimers.className = "ftimers timers"; ftimers.hidden = true; document.body.appendChild(ftimers);
-function stopTimer(id){ const k = timers.findIndex(x => x.id === id); if (k >= 0) timers.splice(k, 1); tickTimers(); }
+function cancelPushTimer(t){ if (t && t.pushId && !t.pushGone) { t.pushGone = true; api("/api/push/timer/" + t.pushId, { method: "DELETE" }).catch(() => {}); } }
+function stopTimer(id){ const k = timers.findIndex(x => x.id === id); if (k >= 0) { cancelPushTimer(timers[k]); timers.splice(k, 1); } tickTimers(); }
 ftimers.addEventListener("click", e => { const b = e.target.closest("[data-tstop]"); if (b) stopTimer(b.dataset.tstop); });
 cookEl.addEventListener("click", e => {
   const t = e.target.closest("[data-act],[data-tstart],[data-tstop]"); if (!t) return;
@@ -1037,22 +1145,22 @@ function renderImport(){
     <div class="back-row"><button class="btn ghost" data-act="back">← Recipes</button></div>
     <div class="card"><div class="card-body form">
       <div><div class="eyebrow">Add a recipe</div><h2 style="margin:4px 0 4px">Save from anywhere</h2>
-      <p class="muted" style="margin:0">Paste a link from a recipe site, Instagram, Facebook, TikTok or Pinterest. You'll check it before it's saved.</p></div>
+      <p class="muted" style="margin:0">Paste a link from a recipe site, Instagram, Facebook or TikTok. You'll check it before it's saved. If a post's recipe is in a "link in bio", paste that link instead.</p></div>
       <div class="field"><label for="impUrl">Link</label><div class="urlrow"><input id="impUrl" type="url" inputmode="url" autocapitalize="off" placeholder="https://…" value="${esc(I.url)}"><button type="button" class="btn" data-act="pasteurl">Paste</button></div></div>
       <button type="button" class="btn primary block" data-act="impurl" ${I.busy?"disabled":""}>${I.busy==="url" ? `<span class="spinner"></span> Reading the page…` : "Get recipe"}</button>
       ${I.msg ? `<div class="msg ${I.err?"err":""}">${esc(I.msg)}</div>` : ""}
       <div class="or">or</div>
-      <div class="field"><label for="impText">Paste the caption or recipe text</label><span class="hint">For Instagram or Facebook, tap ··· or the caption and copy it, then paste here.</span><textarea id="impText" style="min-height:120px" placeholder="Paste here">${esc(I.text)}</textarea></div>
+      <div class="field"><label for="impText">Paste the caption or recipe text</label><span class="hint">Copied a caption? Paste it here.</span><textarea id="impText" style="min-height:120px" placeholder="Paste here">${esc(I.text)}</textarea></div>
       <button type="button" class="btn block" data-act="imptext" ${I.busy?"disabled":""}>${I.busy==="text" ? `<span class="spinner"></span> Reading the text…` : "Read this text"}</button>
       <div class="or">or</div>
-      <div class="field"><label for="impImg">Screenshot or photo</label><span class="hint">A screenshot of a post, a cookbook page or a recipe card. Make sure the ingredients are visible.</span><input id="impImg" type="file" accept="image/*" ${I.busy?"disabled":""}></div>
-      ${I.busy==="img" ? `<div class="msg"><span class="spinner"></span> Reading the image. This can take up to a minute.</div>` : ""}
+      <div class="field"><label for="impImg">Screenshots or photos</label><span class="hint">Pick up to 6 at once. For a long Instagram or Facebook caption, tap "more", then screenshot as you scroll. They're read in the order you pick them.</span><input id="impImg" type="file" accept="image/*" multiple ${I.busy?"disabled":""}></div>
+      ${I.busy==="img" ? `<div class="msg"><span class="spinner"></span> ${esc(I.progress || "Reading…")}</div>` : ""}
       <div class="or">or</div>
       <button type="button" class="btn ghost block" data-act="manual">Type it in yourself</button>
     </div></div>`;
   document.getElementById("impUrl").addEventListener("input", e => I.url = e.target.value);
   document.getElementById("impText").addEventListener("input", e => I.text = e.target.value);
-  document.getElementById("impImg").addEventListener("change", e => { const f = e.target.files[0]; if (f) importImage(f); });
+  document.getElementById("impImg").addEventListener("change", e => { const fs = [...e.target.files].slice(0, 6); if (fs.length) importImages(fs); });
 }
 function gotDraft(recipe){
   S.draft = recipe; S.id = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.removePhoto = false;
@@ -1090,13 +1198,24 @@ async function shrink(file, max, quality){
   const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(bmp, 0, 0, c.width, c.height);
   return await new Promise(res => c.toBlob(b => res(b), "image/jpeg", quality));
 }
-async function importImage(file){
-  const I = S.imp; I.busy = "img"; I.msg = ""; renderImport();
+// each screenshot is read to text, then the texts are joined in order and turned into one recipe
+async function importImages(files){
+  const I = S.imp; I.busy = "img"; I.msg = ""; I.err = false;
+  const parts = [];
   try {
-    let blob; try { blob = await shrink(file, 1400, 0.85); } catch { blob = file; }
-    const out = await api("/api/import/image", { method: "POST", body: blob });
+    for (let i = 0; i < files.length; i++) {
+      I.progress = files.length > 1 ? `Reading screenshot ${i + 1} of ${files.length}…` : "Reading the image…"; renderImport();
+      let blob; try { blob = await shrink(files[i], 1600, 0.85); } catch { blob = files[i]; }
+      const out = await api("/api/import/ocr", { method: "POST", body: blob });
+      if (out.error) throw new Error(out.error);
+      if (out.text) parts.push(out.text);
+    }
+    const text = parts.join("\n\n");
+    if (text.replace(/\s/g, "").length < 20) throw new Error("Couldn't find any text in those images. Make sure the ingredients are visible.");
+    I.progress = "Turning it into a recipe…"; renderImport();
+    const out = await api("/api/import/text", { method: "POST", body: { text, source_url: I.url.trim() || I.source_url || "" } });
     I.busy = "";
-    if (out.recipe) { out.recipe.source_url = out.recipe.source_url || I.url.trim() || I.source_url || ""; if (out.recipe.source_url && !out.recipe.source_name) { try { out.recipe.source_name = new URL(out.recipe.source_url).hostname.replace(/^www\./,""); } catch {} } return gotDraft(out.recipe); }
+    if (out.recipe) { if (out.recipe.source_url && !out.recipe.source_name) { try { out.recipe.source_name = new URL(out.recipe.source_url).hostname.replace(/^www\./, ""); } catch {} } return gotDraft(out.recipe); }
     I.msg = out.error; I.err = true;
   } catch (e) { I.busy = ""; I.msg = e.message; I.err = true; }
   renderImport();
@@ -1315,7 +1434,17 @@ async function saveStores(list){
 }
 
 /* ---------- me ---------- */
-function renderMe(){
+// redraws keep anything the person is in the middle of typing
+function keepTyping(draw){
+  const kept = [...app.querySelectorAll("input[id]:not([type=file]):not([type=checkbox]):not([type=password]),textarea[id]")]
+    .filter(el => el.value !== el.defaultValue).map(el => [el.id, el.value]);
+  const act = document.activeElement && document.activeElement.id, sel = act && document.activeElement.selectionStart;
+  draw();
+  for (const [id, v] of kept) { const el = document.getElementById(id); if (el) el.value = v; }
+  if (act) { const el = document.getElementById(act); if (el) { el.focus({ preventScroll: true }); try { if (sel != null) el.setSelectionRange(sel, sel); } catch {} } }
+}
+function renderMe(){ keepTyping(renderMeNow); }
+function renderMeNow(){
   const host = location.origin;
   const sec = (id, title, sub, body) => { const open = S.meOpen === id;
     return `<section class="acc ${open ? "open" : ""}"><button class="acc-h" data-acc="${id}" aria-expanded="${open}"><span class="acc-t"><b>${esc(title)}</b><span>${esc(sub)}</span></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>${open ? `<div class="acc-b form">${body()}</div>` : ""}</section>`; };
@@ -1333,7 +1462,11 @@ function renderMe(){
     ${sec("sound", "Timer sound", (SOUNDS.find(x => x.id === currentSound()) || SOUNDS[0]).name, () => `
       <p class="small muted" style="margin:0">Tap a sound to hear it. It plays even with the ringer switch off, so turn your volume up.</p>
       <div class="sounds" role="radiogroup" aria-label="Timer sound">${SOUNDS.map(x => `<button class="soundpick" role="radio" data-act="sound" data-sound="${x.id}" aria-checked="${currentSound() === x.id}"><span class="dot"></span><span class="sn"><b>${esc(x.name)}</b><span>${esc(x.desc)}</span></span><span class="play" aria-hidden="true">▶</span></button>`).join("")}</div>
-      <div class="btn-row"><button class="btn ghost" data-act="stopsound">Stop sound</button></div>`)}
+      <div class="btn-row"><button class="btn ghost" data-act="stopsound">Stop sound</button></div>
+      <div class="invite">
+        <b>Lock-screen alerts</b>
+        ${pushStatusHtml()}
+      </div>`)}
     ${sec("share", "Share button shortcut", "Save recipes from Safari, Instagram, Facebook", () => `
       <p class="small muted" style="margin:0">Make a Shortcut once, then tap Share → <b>Save Recipe</b> on any recipe page, Instagram or Facebook post. It saves straight to the box.</p>
       <ol class="howto small">
@@ -1350,7 +1483,8 @@ function renderMe(){
     ${sec("news", "What's new", "Version " + (S.version || ""), () => `
       <p class="small muted" style="margin:0">You're on version ${esc(S.version || "")}${versionDate(CHANGELOG[0]) ? ", live since " + esc(versionDate(CHANGELOG[0])) : ""}.</p>
       <button class="btn" data-act="news" style="justify-self:start">See update history</button>`)}
-    ${sec("household", "Household", Object.values(S.people).join(", ") + " · password reset codes", () => `
+    ${sec("household", (S.household && S.household.name) || "Household", Object.values(S.people).join(", "), () => `
+      <div class="field"><label for="hh-name">Household name</label><div class="urlrow"><input id="hh-name" class="inp" maxlength="60" value="${esc((S.household && S.household.name) || "")}"><button class="btn" data-act="hhsave">Save</button></div></div>
       <div class="invite">
         <b>Invite someone</b>
         <span class="small muted">Makes a one-time link to text them. They tap it, make an account, and join this household. No household code needed.</span>
@@ -1363,6 +1497,16 @@ function renderMe(){
       <p class="small muted" style="margin:0">If someone forgets their password, make them a reset code. They tap <b>Forgot password?</b> on the login screen and enter it.</p>
       <ul class="glist">${Object.entries(S.people).map(([id, name]) => `<li><span class="txt" style="flex:1"><b>${esc(name)}</b>${id === S.me.id ? ` <span class="muted small">(you)</span>` : ""}</span><button class="btn" data-resetfor="${esc(id)}">Make reset code</button></li>`).join("")}</ul>
       ${S.resetCode ? `<div class="msg" role="status"><div class="small">Reset code for <b>${esc(S.resetCode.name)}</b>, good for one hour:</div><div class="rcode">${esc(S.resetCode.code)}</div><div class="small muted">Read it to them or text it. It works once.</div></div>` : ""}`)}
+    ${S.me.is_admin ? sec("admin", "Households", "App owner · start a household for friends", () => `
+      <p class="small muted" style="margin:0">Make a one-time link for a friend or relative to start their own household. Their recipes and lists stay separate from yours. They can then invite their own family.</p>
+      ${S.starter ? `<div class="msg"><div class="code" style="background:var(--card)">${esc(S.starter.url)}</div>
+        <div class="btn-row" style="margin-top:8px"><button class="btn primary" data-act="stshare">Send link</button><button class="btn" data-act="stcopy">Copy link</button></div>
+        <div class="small muted" style="margin-top:6px">Works once, until ${esc(new Date(S.starter.expires).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }))}.</div></div>`
+        : `<button class="btn primary" data-act="starter" style="justify-self:start">New household link</button>`}
+      ${S.admin ? `<ul class="glist">${S.admin.households.map(h => `<li><span class="txt" style="flex:1"><b>${esc(h.name || "Unnamed")}</b><span class="from">${h.members} ${h.members === 1 ? "person" : "people"} · ${h.recipes} recipes</span></span></li>`).join("")}</ul>
+        ${S.admin.openStarters ? `<span class="small muted">${S.admin.openStarters} unused household ${S.admin.openStarters === 1 ? "link" : "links"}. <button class="linkbtn" data-act="stcancel">Cancel ${S.admin.openStarters === 1 ? "it" : "them"}</button></span>` : ""}`
+        : `<p class="small muted" style="margin:0"><span class="spinner"></span> Loading households…</p>`}`) : ""}
+    ${S.me.is_admin ? sec("usage", "Free plan usage", usageSummary(), () => usageHtml()) : ""}
     ${sec("backup", "Backup", "Download or restore your recipes", () => `
       <p class="small muted" style="margin:0">Download every recipe as a file, or bring recipes back in from one.</p>
       <div class="btn-row"><a class="btn" href="/api/export">Download backup</a><label class="btn" for="restore">Restore from backup</label><input id="restore" type="file" accept="application/json,.json" hidden></div>`)}
@@ -1374,7 +1518,7 @@ function renderMe(){
       </form>`)}
     </div>
     <div class="btn-row" style="margin-top:16px"><button class="btn danger" data-act="logout">Log out</button></div>
-    <p class="hint" style="margin-top:16px">Recipe Box version ${esc(S.version || "")}</p>`;
+    <p class="hint" style="margin-top:16px">Recipe Box version ${esc(S.version || "")} · <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>`;
   document.getElementById("pwf")?.addEventListener("submit", async e => {
     e.preventDefault();
     try { await api("/api/me/password", { method: "POST", body: { current: document.getElementById("pw-cur").value, password: document.getElementById("pw-new").value } }); toast("Password updated"); renderMe(); } catch (err) { toast(err.message); }
@@ -1398,6 +1542,36 @@ async function toggleWake(){
 function openRecipe(id){ S.iSel = null; S.tab = "recipes"; S.id = id; S.view = "detail"; S.scale = 1; S.planPick = false; render(); window.scrollTo(0,0); }
 function openNew(){ S.tab = "recipes"; S.id = null; S.draft = null; S.view = "import"; render(); window.scrollTo(0,0); }
 fab.addEventListener("click", openNew);
+
+/* ---------- lock-screen alerts (web push) ---------- */
+const standalone = () => { try { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch { return false; } };
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const pushReady = () => pushSupported() && Notification.permission === "granted" && S.pushOn;
+function pushStatusHtml(){
+  if (!pushSupported() || !S.vapid) return `<span class="small muted">${standalone() ? "This phone doesn't support alerts from web apps. On iPhone, update iOS." : "Open Recipe Box from its Home Screen icon (Share → Add to Home Screen in Safari) to turn these on."}</span>`;
+  if (Notification.permission === "denied") return `<span class="small muted">Notifications are turned off for Recipe Box. Turn them on in Settings → Notifications → Recipe Box.</span>`;
+  if (S.pushOn) return `<span class="small muted">On. Timers will alert you even when your phone is locked or you're in another app.</span><div class="btn-row"><button class="btn" data-act="pushtest">Send a test alert</button></div>`;
+  return `<span class="small muted">Get timer alerts on your lock screen, even when you leave the app. Each phone turns this on separately.</span><button class="btn primary" data-act="pushon" style="justify-self:start">Turn on lock-screen alerts</button>`;
+}
+async function enablePush(){
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("Alerts weren't allowed."); return renderMe(); }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(S.vapid) });
+    await api("/api/push/subscribe", { method: "POST", body: sub.toJSON() });
+    S.pushOn = true; toast("Lock-screen alerts are on"); renderMe();
+  } catch (e) { toast("Couldn't turn on alerts: " + (e.message || e)); }
+}
+function b64uToBytes(s){ const p = "=".repeat((4 - s.length % 4) % 4); const b = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+async function checkPush(){
+  try {
+    if (!pushSupported() || Notification.permission !== "granted") return;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) { S.pushOn = true; api("/api/push/subscribe", { method: "POST", body: sub.toJSON() }).catch(() => {}); }
+  } catch {}
+}
 
 /* ---------- grocery name edits ---------- */
 app.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("input[data-gedit]")) { e.preventDefault(); e.target.blur(); } });
@@ -1532,7 +1706,10 @@ app.addEventListener("click", async e => {
     if (d.addday) { S.addingDay = d.addday; return renderPlan(); }
     if (d.unplan) { await api("/api/plan/" + d.unplan, { method: "DELETE" }); await loadPlan(); return renderPlan(); }
     if (d.gcheck) { const g = S.grocery.find(x => x.id === d.gcheck); g.checked = t.checked ? 1 : 0; renderGrocery(); await api("/api/grocery/" + g.id, { method: "PUT", body: { checked: g.checked } }); return; }
-    if (d.acc) { S.meOpen = S.meOpen === d.acc ? null : d.acc; if (S.meOpen === "household") api("/api/invites").then(r => { S.openInvites = r.open; if (S.meOpen === "household" && S.tab === "me") renderMe(); }).catch(() => {}); renderMe(); const o = app.querySelector(".acc.open"); if (o) o.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); return; }
+    if (d.acc) { S.meOpen = S.meOpen === d.acc ? null : d.acc;
+      if (S.meOpen === "admin") api("/api/admin/households").then(r => { S.admin = r; if (S.meOpen === "admin" && S.tab === "me") renderMe(); }).catch(() => {});
+      if (S.meOpen === "usage") api("/api/admin/usage").then(r => { S.usageWeek = r; S.usage = r.today; if (S.meOpen === "usage" && S.tab === "me") renderMe(); }).catch(() => {});
+      if (S.meOpen === "household") api("/api/invites").then(r => { S.openInvites = r.open; if (S.meOpen === "household" && S.tab === "me") renderMe(); }).catch(() => {}); renderMe(); const o = app.querySelector(".acc.open"); if (o) o.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); return; }
     if (d.resetfor) { const out = await api("/api/reset/create", { method: "POST", body: { user_id: d.resetfor } }); S.resetCode = out; renderMe(); return; }
     if (d.itoggle !== undefined) { const i = +d.itoggle; S.iSel.has(i) ? S.iSel.delete(i) : S.iSel.add(i); return renderDetail(); }
     if (d.iadd !== undefined) {
@@ -1610,6 +1787,17 @@ app.addEventListener("click", async e => {
     else if (a === "news") { S.newsFrom = S.tab; S.tab = "news"; renderNews(); fab.hidden = true; }
     else if (a === "newsback") { go(S.newsFrom || "me"); }
     else if (a === "newsx") { markSeen(); renderList(); }
+    else if (a === "usagego") { S.meOpen = "usage"; go("me"); api("/api/admin/usage").then(r => { S.usageWeek = r; S.usage = r.today; if (S.tab === "me") renderMe(); }).catch(() => {}); }
+    else if (a === "hhsave") { const name = document.getElementById("hh-name").value.trim(); S.household = (await api("/api/household", { method: "PUT", body: { name } })).household; renderMe(); toast("Household renamed"); }
+    else if (a === "starter") { S.starter = await api("/api/admin/starter", { method: "POST" }); if (S.admin) S.admin.openStarters++; renderMe(); }
+    else if (a === "stshare" || a === "stcopy") {
+      const msg = `I set you up with your own Recipe Box for saving recipes and grocery lists. Tap this link to make your account:\n${S.starter.url}\n\nThen in Safari tap Share → Add to Home Screen to get the app. The link works once.`;
+      if (a === "stshare" && navigator.share) { try { await navigator.share({ title: "Your own Recipe Box", text: msg }); return; } catch (err) { if (err && err.name === "AbortError") return; } }
+      try { await navigator.clipboard.writeText(a === "stcopy" ? S.starter.url : msg); toast(a === "stcopy" ? "Link copied" : "Message copied. Paste it into a text."); } catch { toast("Press and hold the link to copy it."); }
+    }
+    else if (a === "stcancel") { await api("/api/admin/starter", { method: "DELETE" }); S.starter = null; if (S.admin) S.admin.openStarters = 0; renderMe(); toast("Unused household links cancelled"); }
+    else if (a === "pushon") { await enablePush(); }
+    else if (a === "pushtest") { const r = await api("/api/push/test", { method: "POST" }); toast(r.sent ? "Test alert sent. Lock your phone to see it." : r.error); }
     else if (a === "invite") { S.invite = await api("/api/invites", { method: "POST" }); S.openInvites = (S.openInvites || 0) + 1; renderMe(); }
     else if (a === "invshare" || a === "invcopy") {
       const msg = `Join our family Recipe Box! Tap this link to make your account:\n${S.invite.url}\n\nThen in Safari tap Share → Add to Home Screen to get the app. The link works once and expires in 7 days.`;

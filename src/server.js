@@ -1,14 +1,17 @@
-// Recipe Box — a free, self-hosted recipe keeper for a household.
+// Recipe Box — a free, self-hosted recipe keeper for families.
 // Runs as one Cloudflare Worker with a D1 database (binding: DB) and
-// Workers AI (binding: AI). Set a secret named INVITE_CODE: anyone who
-// signs up must type it, so strangers can't join your box.
+// Workers AI (binding: AI). Each household's data is kept separate.
+// Secrets: INVITE_CODE (joins the first household), optional ADSENSE_CLIENT /
+// ADSENSE_SLOT (turn on the banner ad). A cron trigger sends timer alerts.
 
 const APP_HTML = __APP_HTML__;
+const SW_JS = __SW_JS__;
+const PRIVACY_HTML = __PRIVACY_HTML__;
 const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "2.2";
+const APP_VERSION = "3.0";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -27,13 +30,45 @@ const MIGRATIONS = [`ALTER TABLE grocery ADD COLUMN store TEXT`,
   `CREATE TABLE IF NOT EXISTS reset_codes (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS invites (token_hash TEXT PRIMARY KEY, created_by TEXT NOT NULL, expires INTEGER NOT NULL, used_by TEXT)`,
   `ALTER TABLE grocery ADD COLUMN link TEXT`,
-  `ALTER TABLE grocery ADD COLUMN photo_id TEXT`];
+  `ALTER TABLE grocery ADD COLUMN photo_id TEXT`,
+  // 3.0: separate households, admin, usage meter, lock-screen timer alerts
+  `CREATE TABLE IF NOT EXISTS households (id TEXT PRIMARY KEY, name TEXT, created INTEGER)`,
+  `ALTER TABLE users ADD COLUMN household_id TEXT`,
+  `ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`,
+  `ALTER TABLE recipes ADD COLUMN household_id TEXT`,
+  `ALTER TABLE grocery ADD COLUMN household_id TEXT`,
+  `ALTER TABLE plan ADD COLUMN household_id TEXT`,
+  `ALTER TABLE invites ADD COLUMN household_id TEXT`,
+  `CREATE TABLE IF NOT EXISTS starter_codes (token_hash TEXT PRIMARY KEY, created_by TEXT, expires INTEGER, used_by TEXT)`,
+  `CREATE TABLE IF NOT EXISTS usage (day TEXT, key TEXT, n REAL, PRIMARY KEY (day, key))`,
+  `CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, user_id TEXT, p256dh TEXT, auth TEXT, created INTEGER)`,
+  `CREATE TABLE IF NOT EXISTS push_timers (id TEXT PRIMARY KEY, user_id TEXT, fire_at INTEGER, title TEXT, body TEXT)`,
+  `CREATE INDEX IF NOT EXISTS recipes_hh ON recipes (household_id)`,
+  `CREATE INDEX IF NOT EXISTS grocery_hh ON grocery (household_id)`,
+  `CREATE INDEX IF NOT EXISTS plan_hh ON plan (household_id, day)`,
+  `CREATE INDEX IF NOT EXISTS timers_due ON push_timers (fire_at)`];
+// one-time move of everything from before 3.0 into the first household
+const BACKFILL = [
+  `INSERT OR IGNORE INTO households (id, name, created) VALUES ('h1', 'Our household', strftime('%s','now') * 1000)`,
+  `UPDATE users SET household_id = 'h1' WHERE household_id IS NULL`,
+  `UPDATE recipes SET household_id = 'h1' WHERE household_id IS NULL`,
+  `UPDATE grocery SET household_id = 'h1' WHERE household_id IS NULL`,
+  `UPDATE plan SET household_id = 'h1' WHERE household_id IS NULL`,
+  `UPDATE invites SET household_id = 'h1' WHERE household_id IS NULL`,
+  `INSERT OR IGNORE INTO settings (key, value) SELECT 'stores:h1', value FROM settings WHERE key = 'stores'`,
+  // the first person to sign up runs the app
+  `UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY created LIMIT 1) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)`,
+  `INSERT OR REPLACE INTO settings (key, value) VALUES ('migrated:households', '1')`];
+// Cloudflare free plan daily limits (reset at midnight UTC) and storage cap
+const LIMITS = { requests: 100000, neurons: 10000, dbsize: 5e9 };
 const DEFAULT_STORES = ["Costco","Walmart","Aldi","Kroger","Meijer","Target","Sam's Club"];
 let schemaReady = false;
 async function ensureSchema(env) {
   if (schemaReady) return;
   await env.DB.batch(SCHEMA.map(s => env.DB.prepare(s)));
   for (const m of MIGRATIONS) { try { await env.DB.prepare(m).run(); } catch {} }
+  const done = await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'migrated:households'").first();
+  if (!done) await env.DB.batch(BACKFILL.map(q => env.DB.prepare(q)));
   // the first request after an update records when this version went live
   try { await env.DB.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").bind("deployed:" + APP_VERSION, String(Date.now())).run(); } catch {}
   schemaReady = true;
@@ -71,11 +106,11 @@ async function currentUser(req, env) {
   const auth = req.headers.get("authorization") || "";
   if (auth.startsWith("Bearer ")) {
     const key = auth.slice(7).trim();
-    if (key) return await env.DB.prepare("SELECT id, email, name FROM users WHERE quick_key = ?").bind(key).first();
+    if (key) return await env.DB.prepare("SELECT id, email, name, household_id AS hh, is_admin FROM users WHERE quick_key = ?").bind(key).first();
   }
   const token = getCookie(req, "rb_session");
   if (!token) return null;
-  return await env.DB.prepare("SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires > ?").bind(token, Date.now()).first();
+  return await env.DB.prepare("SELECT u.id, u.email, u.name, u.household_id AS hh, u.is_admin FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires > ?").bind(token, Date.now()).first();
 }
 
 /* ---------------- recipe import ---------------- */
@@ -235,18 +270,18 @@ function normalizeAi(o, url, image) {
 }
 async function aiFromText(env, text, url, image) {
   if (!env.AI) throw new Error("ai_missing");
-  const out = await env.AI.run(TEXT_MODEL, {
+  const out = await runAI(env, TEXT_MODEL, {
     messages: [{ role: "system", content: AI_PROMPT }, { role: "user", content: text.slice(0, 24000) }],
     max_tokens: 2500, temperature: 0.1
-  });
+  }, AI_PROMPT.length + Math.min(text.length, 24000));
   return normalizeAi(parseAiJson(out && out.response), url, image);
 }
 async function aiFromImage(env, bytes) {
   if (!env.AI) throw new Error("ai_missing");
-  const run = () => env.AI.run(VISION_MODEL, {
+  const run = () => runAI(env, VISION_MODEL, {
     messages: [{ role: "system", content: AI_PROMPT }, { role: "user", content: "Here is a screenshot or photo of a recipe. Extract it." }],
     image: [...bytes], max_tokens: 2500, temperature: 0.1
-  });
+  }, AI_PROMPT.length + 2000);
   let out;
   try { out = await run(); }
   catch (e) {
@@ -262,6 +297,16 @@ async function importFromUrl(env, rawUrl) {
   try { url = new URL(rawUrl.trim()); if (!/^https?:$/.test(url.protocol)) throw 0; } catch { return { error: "That doesn't look like a web link." }; }
   const host = url.hostname;
   const social = SOCIAL.test(host);
+  if (social) {
+    const s = await socialText(url);
+    if (s.text.replace(/\s/g, "").length > 60) {
+      try {
+        const ai = await aiFromText(env, s.text, url.href, s.image);
+        if (ai) return { recipe: ai, method: "caption" };
+      } catch (e) { if (aiError(e)) return { error: aiError(e) }; }
+    }
+    return { error: s.text ? "The post's caption didn't include the full recipe, or it was cut short. Tap \"more\" on the caption, take screenshots while you scroll, and add them all at once." : "That post's caption isn't readable from the link. Tap \"more\" on the caption, take screenshots while you scroll, and add them all at once.", needsPaste: true, source_url: url.href };
+  }
   let page;
   try { page = await fetchPage(url.href); } catch { page = { ok: false, html: "", status: 0, finalUrl: url.href }; }
   const finalUrl = page.finalUrl || url.href;
@@ -300,13 +345,18 @@ async function insertRecipe(env, user, data) {
   const r = sanitizeRecipe(data);
   if (!r.title) return null;
   const id = uid(), now = Date.now();
-  const cols = ["id", ...Object.keys(r), "added_by", "created", "updated"];
-  const vals = [id, ...Object.values(r), user.id, now, now];
+  const cols = ["id", ...Object.keys(r), "added_by", "created", "updated", "household_id"];
+  const vals = [id, ...Object.values(r), user.id, now, now, user.hh];
   await env.DB.prepare(`INSERT INTO recipes (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`).bind(...vals).run();
   return id;
 }
 
 /* ---------------- router ---------------- */
+const ABC_LOWER = "abcdefghijkmnpqrstuvwxyz23456789";
+const token16 = () => [...crypto.getRandomValues(new Uint8Array(16))].map(x => ABC_LOWER[x % ABC_LOWER.length]).join("");
+const validEmail = e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
+const aiError = e => String(e && e.message) === "ai_missing" ? "Recipe reading isn't switched on yet. Add the Workers AI binding named AI (see setup)." : null;
+
 async function api(req, env, url) {
   const p = url.pathname, m = req.method;
   const body = async () => { try { return await req.json(); } catch { return {}; } };
@@ -314,23 +364,39 @@ async function api(req, env, url) {
   if (p === "/api/signup" && m === "POST") {
     const b = await body();
     const email = String(b.email || "").trim().toLowerCase(), name = String(b.name || "").trim().slice(0, 60), pw = String(b.password || "");
-    // join with a one-time invite link, or with the household code
-    let inviteHash = null;
+    // three ways in: an invite link (joins that household), a starter link (makes a new household),
+    // or the original household code (joins the first household)
+    let hh = null, inviteHash = null, starterHash = null;
     if (b.inviteToken) {
       inviteHash = await sha256(String(b.inviteToken));
-      const inv = await env.DB.prepare("SELECT expires, used_by FROM invites WHERE token_hash = ?").bind(inviteHash).first();
-      if (!inv || inv.used_by || inv.expires < Date.now()) return err("This invite link has expired or was already used. Ask for a new one.", 403);
+      const inv = await env.DB.prepare("SELECT i.expires, i.used_by, COALESCE(i.household_id, u.household_id) AS hh FROM invites i LEFT JOIN users u ON u.id = i.created_by WHERE i.token_hash = ?").bind(inviteHash).first();
+      if (!inv || inv.used_by || inv.expires < Date.now() || !inv.hh) return err("This invite link has expired or was already used. Ask for a new one.", 403);
+      hh = inv.hh;
+    } else if (b.starterToken) {
+      starterHash = await sha256(String(b.starterToken));
+      const st = await env.DB.prepare("SELECT expires, used_by FROM starter_codes WHERE token_hash = ?").bind(starterHash).first();
+      if (!st || st.used_by || st.expires < Date.now()) return err("This link has expired or was already used. Ask for a new one.", 403);
     } else {
-      if (!env.INVITE_CODE) return err("Sign-ups are closed until an INVITE_CODE secret is set (see setup).", 403);
+      if (!env.INVITE_CODE) return err("Sign-ups need an invite link.", 403);
       if (String(b.invite || "").trim() !== env.INVITE_CODE) return err("That household code isn't right.", 403);
+      hh = "h1";
     }
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return err("Enter a valid email address.");
+    if (!validEmail(email)) return err("Enter a valid email address.");
     if (!name) return err("Enter your name.");
     if (pw.length < 8) return err("Use a password with at least 8 characters.");
     if (await env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first()) return err("There's already an account with that email. Log in instead.");
-    const salt = randHex(16), id = uid();
-    await env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created) VALUES (?,?,?,?,?,?,?)").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), Date.now()).run();
-    if (inviteHash) await env.DB.prepare("UPDATE invites SET used_by = ? WHERE token_hash = ?").bind(id, inviteHash).run();
+    const salt = randHex(16), id = uid(), now = Date.now();
+    const writes = [];
+    if (starterHash) {
+      hh = "h" + uid();
+      const hname = String(b.householdName || "").trim().slice(0, 60) || name + "'s household";
+      writes.push(env.DB.prepare("INSERT INTO households (id, name, created) VALUES (?, ?, ?)").bind(hh, hname, now));
+      writes.push(env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").bind("stores:" + hh, JSON.stringify(DEFAULT_STORES)));
+      writes.push(env.DB.prepare("UPDATE starter_codes SET used_by = ? WHERE token_hash = ?").bind(id, starterHash));
+    }
+    writes.push(env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created,household_id,is_admin) VALUES (?,?,?,?,?,?,?,?,0)").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), now, hh));
+    if (inviteHash) writes.push(env.DB.prepare("UPDATE invites SET used_by = ? WHERE token_hash = ?").bind(id, inviteHash));
+    await env.DB.batch(writes);
     return startSession(env, id);
   }
   if (p === "/api/login" && m === "POST") {
@@ -341,11 +407,17 @@ async function api(req, env, url) {
   }
   if (p === "/api/invite-info" && m === "GET") {
     const t = url.searchParams.get("token") || "";
-    const inv = t && await env.DB.prepare("SELECT i.expires, i.used_by, u.name FROM invites i LEFT JOIN users u ON u.id = i.created_by WHERE i.token_hash = ?").bind(await sha256(t)).first();
+    const inv = t && await env.DB.prepare("SELECT i.expires, i.used_by, u.name, h.name AS hname FROM invites i LEFT JOIN users u ON u.id = i.created_by LEFT JOIN households h ON h.id = COALESCE(i.household_id, u.household_id) WHERE i.token_hash = ?").bind(await sha256(t)).first();
     if (!inv || inv.used_by || inv.expires < Date.now()) return json({ valid: false });
-    return json({ valid: true, inviter: inv.name || "Someone" });
+    return json({ valid: true, inviter: inv.name || "Someone", household: inv.hname || "" });
   }
-  // forgot password: someone logged in makes a one-time code; the locked-out person uses it here
+  if (p === "/api/starter-info" && m === "GET") {
+    const t = url.searchParams.get("token") || "";
+    const st = t && await env.DB.prepare("SELECT s.expires, s.used_by, u.name FROM starter_codes s LEFT JOIN users u ON u.id = s.created_by WHERE s.token_hash = ?").bind(await sha256(t)).first();
+    if (!st || st.used_by || st.expires < Date.now()) return json({ valid: false });
+    return json({ valid: true, inviter: st.name || "Someone" });
+  }
+  // forgot password: someone in the household makes a one-time code; the locked-out person uses it here
   if (p === "/api/reset/use" && m === "POST") {
     const b = await body();
     const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -370,33 +442,47 @@ async function api(req, env, url) {
 
   const user = await currentUser(req, env);
   if (!user) return err("Please log in.", 401);
+  const H = user.hh;
 
   if (p === "/api/me" && m === "GET") {
-    const u = await env.DB.prepare("SELECT quick_key FROM users WHERE id = ?").bind(user.id).first();
-    const people = (await env.DB.prepare("SELECT id, name FROM users ORDER BY created").all()).results;
-    const dep = (await env.DB.prepare("SELECT key, value FROM settings WHERE key LIKE 'deployed:%'").all()).results;
-    return json({ user: { ...user, quick_key: u.quick_key }, people, ai: !!env.AI, version: APP_VERSION,
-      deployed: Object.fromEntries(dep.map(r => [r.key.slice(9), +r.value])) });
+    const [u, people, dep, hh] = await Promise.all([
+      env.DB.prepare("SELECT quick_key FROM users WHERE id = ?").bind(user.id).first(),
+      env.DB.prepare("SELECT id, name FROM users WHERE household_id = ? ORDER BY created").bind(H).all(),
+      env.DB.prepare("SELECT key, value FROM settings WHERE key LIKE 'deployed:%'").all(),
+      env.DB.prepare("SELECT id, name FROM households WHERE id = ?").bind(H).first()
+    ]);
+    const out = { user: { id: user.id, email: user.email, name: user.name, quick_key: u.quick_key, is_admin: !!user.is_admin },
+      people: people.results, household: hh || { id: H, name: "" }, ai: !!env.AI, version: APP_VERSION,
+      deployed: Object.fromEntries(dep.results.map(r => [r.key.slice(9), +r.value])),
+      ads: env.ADSENSE_CLIENT && env.ADSENSE_SLOT ? { client: env.ADSENSE_CLIENT, slot: env.ADSENSE_SLOT } : null,
+      vapid: await vapidPublic(env) };
+    if (user.is_admin) out.usage = await usageToday(env);
+    return json(out);
+  }
+  if (p === "/api/household" && m === "PUT") {
+    const b = await body();
+    const name = String(b.name || "").trim().slice(0, 60);
+    if (!name) return err("Give the household a name.");
+    await env.DB.prepare("UPDATE households SET name = ? WHERE id = ?").bind(name, H).run();
+    return json({ household: { id: H, name } });
   }
   if (p === "/api/invites" && m === "POST") {
-    const ABC = "abcdefghijkmnpqrstuvwxyz23456789";
-    const token = [...crypto.getRandomValues(new Uint8Array(16))].map(x => ABC[x % ABC.length]).join("");
-    const expires = Date.now() + 7 * 864e5;
-    await env.DB.prepare("INSERT INTO invites (token_hash, created_by, expires) VALUES (?, ?, ?)").bind(await sha256(token), user.id, expires).run();
+    const token = token16(), expires = Date.now() + 7 * 864e5;
+    await env.DB.prepare("INSERT INTO invites (token_hash, created_by, expires, household_id) VALUES (?, ?, ?, ?)").bind(await sha256(token), user.id, expires, H).run();
     return json({ url: url.origin + "/?invite=" + token, expires });
   }
   if (p === "/api/invites" && m === "GET") {
-    const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM invites WHERE used_by IS NULL AND expires > ?").bind(Date.now()).first();
+    const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM invites WHERE household_id = ? AND used_by IS NULL AND expires > ?").bind(H, Date.now()).first();
     return json({ open: r ? r.n : 0 });
   }
   if (p === "/api/invites" && m === "DELETE") {
-    await env.DB.prepare("DELETE FROM invites WHERE used_by IS NULL").run();
+    await env.DB.prepare("DELETE FROM invites WHERE household_id = ? AND used_by IS NULL").bind(H).run();
     return json({ ok: true });
   }
   if (p === "/api/reset/create" && m === "POST") {
     const b = await body();
-    const target = await env.DB.prepare("SELECT id, name FROM users WHERE id = ?").bind(String(b.user_id || "")).first();
-    if (!target) return err("That person isn't in the household.");
+    const target = await env.DB.prepare("SELECT id, name FROM users WHERE id = ? AND household_id = ?").bind(String(b.user_id || ""), H).first();
+    if (!target) return err("That person isn't in your household.");
     const ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const code = [...crypto.getRandomValues(new Uint8Array(8))].map(x => ABC[x % ABC.length]).join("");
     await env.DB.batch([
@@ -420,9 +506,36 @@ async function api(req, env, url) {
     return json({ quick_key: k });
   }
 
+  // admin: households, starter links, usage
+  if (p.startsWith("/api/admin/")) {
+    if (!user.is_admin) return err("Only the app's owner can do that.", 403);
+    if (p === "/api/admin/households" && m === "GET") {
+      const rows = (await env.DB.prepare(`SELECT h.id, h.name, h.created,
+        (SELECT COUNT(*) FROM users u WHERE u.household_id = h.id) AS members,
+        (SELECT COUNT(*) FROM recipes r WHERE r.household_id = h.id) AS recipes
+        FROM households h ORDER BY h.created`).all()).results;
+      const open = await env.DB.prepare("SELECT COUNT(*) AS n FROM starter_codes WHERE used_by IS NULL AND expires > ?").bind(Date.now()).first();
+      return json({ households: rows, openStarters: open ? open.n : 0 });
+    }
+    if (p === "/api/admin/starter" && m === "POST") {
+      const token = token16(), expires = Date.now() + 14 * 864e5;
+      await env.DB.prepare("INSERT INTO starter_codes (token_hash, created_by, expires) VALUES (?, ?, ?)").bind(await sha256(token), user.id, expires).run();
+      return json({ url: url.origin + "/?start=" + token, expires });
+    }
+    if (p === "/api/admin/starter" && m === "DELETE") {
+      await env.DB.prepare("DELETE FROM starter_codes WHERE used_by IS NULL").run();
+      return json({ ok: true });
+    }
+    if (p === "/api/admin/usage" && m === "GET") {
+      const days = (await env.DB.prepare("SELECT day, key, n FROM usage WHERE day >= ? ORDER BY day").bind(utcDay(-6)).all()).results;
+      return json({ today: await usageToday(env), days, limits: LIMITS });
+    }
+    return err("Not found", 404);
+  }
+
   // recipes
   if (p === "/api/recipes" && m === "GET") {
-    const rows = (await env.DB.prepare("SELECT * FROM recipes ORDER BY title COLLATE NOCASE").all()).results;
+    const rows = (await env.DB.prepare("SELECT * FROM recipes WHERE household_id = ? ORDER BY title COLLATE NOCASE").bind(H).all()).results;
     return json({ recipes: rows });
   }
   if (p === "/api/recipes" && m === "POST") {
@@ -435,15 +548,16 @@ async function api(req, env, url) {
     const r = sanitizeRecipe(await body());
     if ("title" in r && !r.title) return err("A recipe needs a title.");
     const keys = Object.keys(r);
-    if (keys.length) await env.DB.prepare(`UPDATE recipes SET ${keys.map(k => k + " = ?").join(", ")}, updated = ? WHERE id = ?`).bind(...Object.values(r), Date.now(), mt[1]).run();
-    return json({ recipe: await env.DB.prepare("SELECT * FROM recipes WHERE id = ?").bind(mt[1]).first() });
+    if (keys.length) await env.DB.prepare(`UPDATE recipes SET ${keys.map(k => k + " = ?").join(", ")}, updated = ? WHERE id = ? AND household_id = ?`).bind(...Object.values(r), Date.now(), mt[1], H).run();
+    return json({ recipe: await env.DB.prepare("SELECT * FROM recipes WHERE id = ? AND household_id = ?").bind(mt[1], H).first() });
   }
   if (mt && m === "DELETE") {
-    const r = await env.DB.prepare("SELECT photo_id FROM recipes WHERE id = ?").bind(mt[1]).first();
+    const r = await env.DB.prepare("SELECT photo_id FROM recipes WHERE id = ? AND household_id = ?").bind(mt[1], H).first();
+    if (!r) return json({ ok: true });
     await env.DB.batch([
-      env.DB.prepare("DELETE FROM recipes WHERE id = ?").bind(mt[1]),
-      env.DB.prepare("DELETE FROM plan WHERE recipe_id = ?").bind(mt[1]),
-      ...(r && r.photo_id ? [env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(r.photo_id)] : [])
+      env.DB.prepare("DELETE FROM recipes WHERE id = ? AND household_id = ?").bind(mt[1], H),
+      env.DB.prepare("DELETE FROM plan WHERE recipe_id = ? AND household_id = ?").bind(mt[1], H),
+      ...(r.photo_id ? [env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(r.photo_id)] : [])
     ]);
     return json({ ok: true });
   }
@@ -458,11 +572,16 @@ async function api(req, env, url) {
     const text = String(b.text || "").trim();
     if (text.length < 20) return json({ error: "Paste a bit more of the recipe first." });
     try {
-      const r = await aiFromText(env, text, String(b.source_url || ""), "");
+      const r = await aiFromText(env, text, String(b.source_url || ""), String(b.image_url || ""));
       return json(r ? { recipe: r, method: "ai" } : { error: "Couldn't find ingredients in that text. If the recipe is only spoken in the video, it can't be read automatically; type it in instead." });
-    } catch (e) {
-      return json({ error: String(e.message) === "ai_missing" ? "Recipe reading isn't switched on yet. Add the Workers AI binding named AI (see setup)." : "The recipe reader is busy. Try again in a minute." });
-    }
+    } catch (e) { return json({ error: aiError(e) || "The recipe reader is busy. Try again in a minute." }); }
+  }
+  // screenshots: each one is read to plain text; the app then joins them and imports the text
+  if (p === "/api/import/ocr" && m === "POST") {
+    const buf = new Uint8Array(await req.arrayBuffer());
+    if (!buf.length || buf.length > 6_000_000) return json({ error: "That image is too large. Try a screenshot instead of a full photo." });
+    try { return json({ text: await ocrImage(env, buf) }); }
+    catch (e) { return json({ error: aiError(e) || "Couldn't read that image right now. Try again." }); }
   }
   if (p === "/api/import/image" && m === "POST") {
     const buf = new Uint8Array(await req.arrayBuffer());
@@ -470,9 +589,7 @@ async function api(req, env, url) {
     try {
       const r = await aiFromImage(env, buf);
       return json(r ? { recipe: r, method: "ai" } : { error: "Couldn't read a recipe from that image. Make sure the ingredients are visible, or paste the text instead." });
-    } catch (e) {
-      return json({ error: String(e.message) === "ai_missing" ? "Recipe reading isn't switched on yet. Add the Workers AI binding named AI (see setup)." : "Couldn't read that image right now. Try again, or paste the text instead." });
-    }
+    } catch (e) { return json({ error: aiError(e) || "Couldn't read that image right now. Try again, or paste the text instead." }); }
   }
   // iPhone Shortcut: save straight from the Share sheet
   if (p === "/api/quicksave" && m === "POST") {
@@ -501,15 +618,15 @@ async function api(req, env, url) {
 
   // grocery
   if (p === "/api/grocery" && m === "GET") {
-    const items = (await env.DB.prepare("SELECT * FROM grocery ORDER BY checked, created").all()).results;
-    return json({ items, stores: await getStores(env) });
+    const items = (await env.DB.prepare("SELECT * FROM grocery WHERE household_id = ? ORDER BY checked, created").bind(H).all()).results;
+    return json({ items, stores: await getStores(env, H) });
   }
   if (p === "/api/grocery" && m === "POST") {
     const b = await body();
     const items = (Array.isArray(b.items) ? b.items : [b.text]).map(t => String(t || "").trim().slice(0, 300)).filter(Boolean).slice(0, 200);
     const now = Date.now();
     const store = b.store ? String(b.store).slice(0, 40) : null;
-    if (items.length) await env.DB.batch(items.map((t, i) => env.DB.prepare("INSERT INTO grocery (id,text,recipe_id,checked,added_by,created,store) VALUES (?,?,?,0,?,?,?)").bind(uid(), t, b.recipe_id || null, user.id, now + i, store)));
+    if (items.length) await env.DB.batch(items.map((t, i) => env.DB.prepare("INSERT INTO grocery (id,text,recipe_id,checked,added_by,created,store,household_id) VALUES (?,?,?,0,?,?,?,?)").bind(uid(), t, b.recipe_id || null, user.id, now + i, store, H)));
     return json({ added: items.length });
   }
   if (p === "/api/grocery/bulk" && m === "POST") {
@@ -517,83 +634,108 @@ async function api(req, env, url) {
     const ids = (Array.isArray(b.ids) ? b.ids : []).map(String).filter(x => /^[\w-]+$/.test(x)).slice(0, 500);
     if (!ids.length) return json({ changed: 0 });
     const st = b.store ? String(b.store).slice(0, 40) : null;
-    if (b.remove) await env.DB.batch(ids.map(id => env.DB.prepare("DELETE FROM photos WHERE id = (SELECT photo_id FROM grocery WHERE id = ?)").bind(id)));
+    if (b.remove) await env.DB.batch(ids.map(id => env.DB.prepare("DELETE FROM photos WHERE id = (SELECT photo_id FROM grocery WHERE id = ? AND household_id = ?)").bind(id, H)));
     await env.DB.batch(ids.map(id => b.remove
-      ? env.DB.prepare("DELETE FROM grocery WHERE id = ?").bind(id)
-      : env.DB.prepare("UPDATE grocery SET store = ? WHERE id = ?").bind(st, id)));
+      ? env.DB.prepare("DELETE FROM grocery WHERE id = ? AND household_id = ?").bind(id, H)
+      : env.DB.prepare("UPDATE grocery SET store = ? WHERE id = ? AND household_id = ?").bind(st, id, H)));
     return json({ changed: ids.length });
   }
   if (p === "/api/stores" && m === "PUT") {
     const b = await body();
     const list = [...new Set((Array.isArray(b.stores) ? b.stores : []).map(x => String(x || "").trim().slice(0, 40)).filter(Boolean))].slice(0, 30);
-    await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('stores', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(JSON.stringify(list)).run();
+    await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind("stores:" + H, JSON.stringify(list)).run();
     return json({ stores: list });
   }
   if (p === "/api/grocery/clear" && m === "POST") {
     const b = await body();
-    const where = b.all ? "" : " WHERE checked = 1";
+    const only = b.all ? "" : " AND checked = 1";
     await env.DB.batch([
-      env.DB.prepare(`DELETE FROM photos WHERE id IN (SELECT photo_id FROM grocery${where ? where + " AND" : " WHERE"} photo_id IS NOT NULL)`),
-      env.DB.prepare("DELETE FROM grocery" + where)]);
+      env.DB.prepare(`DELETE FROM photos WHERE id IN (SELECT photo_id FROM grocery WHERE household_id = ?${only} AND photo_id IS NOT NULL)`).bind(H),
+      env.DB.prepare(`DELETE FROM grocery WHERE household_id = ?${only}`).bind(H)]);
     return json({ ok: true });
   }
   mt = p.match(/^\/api\/grocery\/([\w-]+)$/);
   if (mt && m === "PUT") {
     const b = await body();
+    const own = await env.DB.prepare("SELECT photo_id FROM grocery WHERE id = ? AND household_id = ?").bind(mt[1], H).first();
+    if (!own) return err("That item isn't on your list anymore.", 404);
+    const set = (col, v) => env.DB.prepare(`UPDATE grocery SET ${col} = ? WHERE id = ? AND household_id = ?`).bind(v, mt[1], H).run();
     if ("text" in b) {
       const text = String(b.text || "").trim().slice(0, 300);
       if (!text) return err("An item needs a name.");
-      await env.DB.prepare("UPDATE grocery SET text = ? WHERE id = ?").bind(text, mt[1]).run();
+      await set("text", text);
     }
-    if ("checked" in b) await env.DB.prepare("UPDATE grocery SET checked = ? WHERE id = ?").bind(b.checked ? 1 : 0, mt[1]).run();
-    if ("store" in b) {
-      const st = b.store ? String(b.store).slice(0, 40) : null;
-      await env.DB.prepare("UPDATE grocery SET store = ? WHERE id = ?").bind(st, mt[1]).run();
-    }
+    if ("checked" in b) await set("checked", b.checked ? 1 : 0);
+    if ("store" in b) await set("store", b.store ? String(b.store).slice(0, 40) : null);
     if ("link" in b) {
       let link = String(b.link || "").trim().slice(0, 2000);
       if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
       try { if (link) new URL(link); } catch { return err("That doesn't look like a web link."); }
-      await env.DB.prepare("UPDATE grocery SET link = ? WHERE id = ?").bind(link || null, mt[1]).run();
+      await set("link", link || null);
     }
     if ("photo_id" in b) {
-      const old = await env.DB.prepare("SELECT photo_id FROM grocery WHERE id = ?").bind(mt[1]).first();
-      await env.DB.prepare("UPDATE grocery SET photo_id = ? WHERE id = ?").bind(b.photo_id ? String(b.photo_id).slice(0, 40) : null, mt[1]).run();
-      if (old && old.photo_id && old.photo_id !== b.photo_id) await env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(old.photo_id).run();
+      await set("photo_id", b.photo_id ? String(b.photo_id).slice(0, 40) : null);
+      if (own.photo_id && own.photo_id !== b.photo_id) await env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(own.photo_id).run();
     }
     return json({ item: await env.DB.prepare("SELECT * FROM grocery WHERE id = ?").bind(mt[1]).first() });
   }
   if (mt && m === "DELETE") {
     await env.DB.batch([
-      env.DB.prepare("DELETE FROM photos WHERE id = (SELECT photo_id FROM grocery WHERE id = ?)").bind(mt[1]),
-      env.DB.prepare("DELETE FROM grocery WHERE id = ?").bind(mt[1])]);
+      env.DB.prepare("DELETE FROM photos WHERE id = (SELECT photo_id FROM grocery WHERE id = ? AND household_id = ?)").bind(mt[1], H),
+      env.DB.prepare("DELETE FROM grocery WHERE id = ? AND household_id = ?").bind(mt[1], H)]);
     return json({ ok: true });
   }
 
   // meal plan
   if (p === "/api/plan" && m === "GET") {
     const from = url.searchParams.get("from") || "0000", to = url.searchParams.get("to") || "9999";
-    return json({ entries: (await env.DB.prepare("SELECT * FROM plan WHERE day >= ? AND day <= ? ORDER BY day, created").bind(from, to).all()).results });
+    return json({ entries: (await env.DB.prepare("SELECT * FROM plan WHERE household_id = ? AND day >= ? AND day <= ? ORDER BY day, created").bind(H, from, to).all()).results });
   }
   if (p === "/api/plan" && m === "POST") {
     const b = await body();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.day || ""))) return err("Pick a day.");
     if (!b.recipe_id && !String(b.note || "").trim()) return err("Pick a recipe or type a note.");
-    await env.DB.prepare("INSERT INTO plan (id,day,recipe_id,note,added_by,created) VALUES (?,?,?,?,?,?)").bind(uid(), b.day, b.recipe_id || null, String(b.note || "").trim().slice(0, 200), user.id, Date.now()).run();
+    if (b.recipe_id && !await env.DB.prepare("SELECT 1 FROM recipes WHERE id = ? AND household_id = ?").bind(String(b.recipe_id), H).first()) return err("That recipe isn't in your box.");
+    await env.DB.prepare("INSERT INTO plan (id,day,recipe_id,note,added_by,created,household_id) VALUES (?,?,?,?,?,?,?)").bind(uid(), b.day, b.recipe_id || null, String(b.note || "").trim().slice(0, 200), user.id, Date.now(), H).run();
     return json({ ok: true });
   }
   mt = p.match(/^\/api\/plan\/([\w-]+)$/);
-  if (mt && m === "DELETE") { await env.DB.prepare("DELETE FROM plan WHERE id = ?").bind(mt[1]).run(); return json({ ok: true }); }
+  if (mt && m === "DELETE") { await env.DB.prepare("DELETE FROM plan WHERE id = ? AND household_id = ?").bind(mt[1], H).run(); return json({ ok: true }); }
   if (mt && m === "PUT") {
     const b = await body();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.day || ""))) return err("Pick a day.");
-    await env.DB.prepare("UPDATE plan SET day = ? WHERE id = ?").bind(b.day, mt[1]).run();
+    await env.DB.prepare("UPDATE plan SET day = ? WHERE id = ? AND household_id = ?").bind(b.day, mt[1], H).run();
     return json({ ok: true });
   }
 
+  // lock-screen timer alerts (web push)
+  if (p === "/api/push/subscribe" && m === "POST") {
+    const b = await body();
+    const ep = String(b.endpoint || ""), k = b.keys || {};
+    if (!/^https:\/\//.test(ep) || !k.p256dh || !k.auth) return err("That notification setup didn't work. Try again.");
+    await env.DB.prepare("INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created) VALUES (?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth")
+      .bind(ep, user.id, String(k.p256dh), String(k.auth), Date.now()).run();
+    return json({ ok: true });
+  }
+  if (p === "/api/push/test" && m === "POST") {
+    const n = await sendPushToUser(env, user.id, { title: "Recipe Box", body: "Lock-screen alerts are working.", tag: "test" });
+    return json(n ? { sent: n } : { error: "No phone is set up for alerts yet." });
+  }
+  if (p === "/api/push/timer" && m === "POST") {
+    const b = await body();
+    const fireAt = Math.round(+b.fire_at || 0);
+    if (!(fireAt > Date.now() && fireAt < Date.now() + 2 * 864e5)) return err("That timer time isn't valid.");
+    const id = uid();
+    await env.DB.prepare("INSERT INTO push_timers (id, user_id, fire_at, title, body) VALUES (?,?,?,?,?)")
+      .bind(id, user.id, fireAt, String(b.title || "Timer done").slice(0, 80), String(b.body || "").slice(0, 160)).run();
+    return json({ id });
+  }
+  mt = p.match(/^\/api\/push\/timer\/([\w-]+)$/);
+  if (mt && m === "DELETE") { await env.DB.prepare("DELETE FROM push_timers WHERE id = ? AND user_id = ?").bind(mt[1], user.id).run(); return json({ ok: true }); }
+
   // backup
   if (p === "/api/export" && m === "GET") {
-    const recipes = (await env.DB.prepare("SELECT * FROM recipes").all()).results;
+    const recipes = (await env.DB.prepare("SELECT * FROM recipes WHERE household_id = ?").bind(H).all()).results;
     return new Response(JSON.stringify({ exported: new Date().toISOString(), recipes }, null, 2), { headers: { "content-type": "application/json", "content-disposition": "attachment; filename=recipe-box-backup.json" } });
   }
   if (p === "/api/import/backup" && m === "POST") {
@@ -606,8 +748,8 @@ async function api(req, env, url) {
 }
 
 /* ---------------- stores ---------------- */
-async function getStores(env) {
-  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'stores'").first();
+async function getStores(env, hh) {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind("stores:" + hh).first();
   try { const v = row && JSON.parse(row.value); if (Array.isArray(v)) return v; } catch {}
   return DEFAULT_STORES;
 }
@@ -617,13 +759,188 @@ async function startSession(env, userId) {
   return json({ ok: true }, 200, { "set-cookie": sessionCookie(token, SESSION_DAYS * 86400) });
 }
 
+/* ---------------- usage meter ----------------
+   Counts this app's own use so the owner can see how close it is to Cloudflare's free limits.
+   Counts are kept in memory and written in small batches to save database writes. */
+const utcDay = (offset = 0) => new Date(Date.now() + offset * 864e5).toISOString().slice(0, 10);
+let usageBuf = {}, usagePending = 0, usageLast = Date.now();
+function bump(key, n = 1) { usageBuf[key] = (usageBuf[key] || 0) + n; usagePending += 1; }
+async function flushUsage(env, force) {
+  if (!usagePending || (!force && usagePending < 20 && Date.now() - usageLast < 60e3)) return;
+  const day = utcDay(), buf = usageBuf;
+  usageBuf = {}; usagePending = 0; usageLast = Date.now();
+  try {
+    const res = await env.DB.batch(Object.entries(buf).map(([k, n]) =>
+      env.DB.prepare("INSERT INTO usage (day, key, n) VALUES (?, ?, ?) ON CONFLICT(day, key) DO UPDATE SET n = n + excluded.n").bind(day, k, n)));
+    const size = res && res[0] && res[0].meta && res[0].meta.size_after;
+    if (size) await env.DB.prepare("INSERT INTO usage (day, key, n) VALUES (?, 'dbsize', ?) ON CONFLICT(day, key) DO UPDATE SET n = excluded.n").bind(day, size).run();
+  } catch {}
+}
+async function usageToday(env) {
+  const rows = (await env.DB.prepare("SELECT key, n FROM usage WHERE day = ?").bind(utcDay()).all()).results;
+  const t = Object.fromEntries(rows.map(r => [r.key, r.n]));
+  for (const [k, n] of Object.entries(usageBuf)) t[k] = (t[k] || 0) + n;   // include what hasn't been written yet
+  if (!t.dbsize) { const last = await env.DB.prepare("SELECT n FROM usage WHERE key = 'dbsize' ORDER BY day DESC LIMIT 1").first(); if (last) t.dbsize = last.n; }
+  return {
+    requests: Math.round(t.requests || 0), neurons: Math.round(t.neurons || 0), imports: Math.round(t.ai_calls || 0), dbsize: Math.round(t.dbsize || 0),
+    pct: { requests: (t.requests || 0) / LIMITS.requests, neurons: (t.neurons || 0) / LIMITS.neurons, dbsize: (t.dbsize || 0) / LIMITS.dbsize }
+  };
+}
+// Workers AI bills in "neurons"; these are Cloudflare's published per-million-token rates for the two models used
+const NEURON_RATES = { [TEXT_MODEL]: [26668, 204805], [VISION_MODEL]: [4410, 61493] };
+async function runAI(env, model, input, promptChars) {
+  const out = await env.AI.run(model, input);
+  const u = out && out.usage, rate = NEURON_RATES[model] || [30000, 200000];
+  const pin = u && u.prompt_tokens || Math.ceil(promptChars / 4), pout = u && u.completion_tokens || Math.ceil(String(out && out.response || "").length / 4);
+  bump("neurons", (pin * rate[0] + pout * rate[1]) / 1e6);
+  bump("ai_calls");
+  return out;
+}
+
+/* ---------------- screenshots ---------------- */
+async function ocrImage(env, bytes) {
+  if (!env.AI) throw new Error("ai_missing");
+  const input = { messages: [{ role: "user", content: "Transcribe all of the text in this image exactly as written, top to bottom, one line per line. Include ingredient amounts exactly. Do not add anything else." }],
+    image: [...bytes], max_tokens: 2000, temperature: 0 };
+  let out;
+  try { out = await runAI(env, VISION_MODEL, input, 400); }
+  catch (e) {
+    if (/agree/i.test(String(e && e.message))) { await env.AI.run(VISION_MODEL, { prompt: "agree" }); out = await runAI(env, VISION_MODEL, input, 400); }
+    else throw e;
+  }
+  return String(out && out.response || "").trim();
+}
+
+/* ---------------- social posts ----------------
+   Instagram and Facebook hide posts behind a login. Two public doors still show the caption:
+   Instagram's embed page, and the preview text they give to link-preview bots. */
+const BOT_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)";
+async function fetchAs(url, ua) {
+  try {
+    const res = await fetch(url, { redirect: "follow", headers: { "user-agent": ua, "accept": "text/html,application/xhtml+xml", "accept-language": "en-US,en;q=0.9" } });
+    return res.ok ? (await res.text()).slice(0, 2_000_000) : "";
+  } catch { return ""; }
+}
+function instagramCode(u) { const m = u.pathname.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]{5,})/); return m ? m[1] : null; }
+async function socialText(u) {
+  const host = u.hostname, texts = [];
+  let image = "";
+  const fromMeta = html => {
+    if (!html) return;
+    const d = meta(html, "og:description") || meta(html, "description"), t = meta(html, "og:title");
+    if (d) texts.push(d); else if (t) texts.push(t);
+    image = image || meta(html, "og:image");
+  };
+  if (/instagram\.com$/i.test(host)) {
+    const code = instagramCode(u);
+    if (code) {
+      const embed = await fetchAs(`https://www.instagram.com/p/${code}/embed/captioned/`, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15");
+      const cap = embed.match(/<div class="Caption"[^>]*>([\s\S]*?)<div class="CaptionComments"/i) || embed.match(/<div class="Caption"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i);
+      if (cap) texts.push(decodeEntities(cap[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " ")).replace(/[ \t]+/g, " ").trim());
+      const img = embed.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/i);
+      if (img) image = decodeEntities(img[1]);
+      fromMeta(await fetchAs(`https://www.instagram.com/p/${code}/`, BOT_UA));
+    }
+  } else if (/(^|\.)tiktok\.com$/i.test(host)) {
+    try { const r = await fetch("https://www.tiktok.com/oembed?url=" + encodeURIComponent(u.href)); if (r.ok) { const j = await r.json(); if (j.title) texts.push(j.title); image = j.thumbnail_url || ""; } } catch {}
+  } else {
+    fromMeta(await fetchAs(u.href, BOT_UA));
+  }
+  // keep the longest version of the caption, plus any others that add something
+  const uniq = [...new Set(texts.map(t => t.trim()).filter(Boolean))].sort((a, b) => b.length - a.length);
+  const keep = uniq.filter((t, i) => !uniq.slice(0, i).some(longer => longer.includes(t.slice(0, 60))));
+  return { text: keep.join("\n\n"), image };
+}
+
+/* ---------------- web push (lock-screen timer alerts) ----------------
+   Standard Web Push: VAPID signing (RFC 8292) and aes128gcm encryption (RFC 8291), using only WebCrypto. */
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64u = s => Uint8Array.from(atob(String(s).replace(/-/g, "+").replace(/_/g, "/") + "===".slice((String(s).length + 3) % 4)), c => c.charCodeAt(0));
+const cat = (...arrs) => { const out = new Uint8Array(arrs.reduce((n, a) => n + a.length, 0)); let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; } return out; };
+const enc = s => new TextEncoder().encode(s);
+let vapidCache = null;
+async function vapidKeys(env) {
+  if (vapidCache) return vapidCache;
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'vapid'").first();
+  let v = row && JSON.parse(row.value);
+  if (!v) {
+    const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    v = { pub: b64u(await crypto.subtle.exportKey("raw", kp.publicKey)), jwk: await crypto.subtle.exportKey("jwk", kp.privateKey) };
+    await env.DB.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('vapid', ?)").bind(JSON.stringify(v)).run();
+    const again = await env.DB.prepare("SELECT value FROM settings WHERE key = 'vapid'").first();   // another request may have won the race
+    v = JSON.parse(again.value);
+  }
+  vapidCache = { pub: v.pub, key: await crypto.subtle.importKey("jwk", v.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]) };
+  return vapidCache;
+}
+async function vapidPublic(env) { try { return (await vapidKeys(env)).pub; } catch { return null; } }
+async function hkdf(salt, ikm, info, bytes) {
+  const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, key, bytes * 8));
+}
+// test hooks: salt and sender key pair can be passed in to check against the RFC 8291 example
+async function encryptPush(payload, p256dh, authSecret, opts = {}) {
+  const uaPub = unb64u(p256dh), auth = unb64u(authSecret);
+  const as = opts.keys || await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const asPub = new Uint8Array(await crypto.subtle.exportKey("raw", as.publicKey));
+  const uaKey = await crypto.subtle.importKey("raw", uaPub, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey }, as.privateKey, 256));
+  const ikm = await hkdf(auth, shared, cat(enc("WebPush: info\0"), uaPub, asPub), 32);
+  const salt = opts.salt || crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, ikm, enc("Content-Encoding: aes128gcm\0"), 16);
+  const nonce = await hkdf(salt, ikm, enc("Content-Encoding: nonce\0"), 12);
+  const aes = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, aes, cat(payload, new Uint8Array([2]))));
+  const rs = new Uint8Array([0, 0, 16, 0]);   // record size 4096
+  return cat(salt, rs, new Uint8Array([asPub.length]), asPub, ct);
+}
+async function sendPush(env, sub, data) {
+  const v = await vapidKeys(env);
+  const aud = new URL(sub.endpoint).origin;
+  const head = b64u(enc(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const claims = b64u(enc(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: "mailto:recipe-box@users.noreply.github.com" })));
+  const sig = b64u(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, v.key, enc(head + "." + claims)));
+  const body = await encryptPush(enc(JSON.stringify(data)), sub.p256dh, sub.auth);
+  let res;
+  try {
+    res = await fetch(sub.endpoint, { method: "POST", body, headers: {
+      authorization: `vapid t=${head}.${claims}.${sig}, k=${v.pub}`, "content-encoding": "aes128gcm",
+      "content-type": "application/octet-stream", ttl: "300", urgency: "high" } });
+  } catch { return false; }
+  if (res.status === 404 || res.status === 410) await env.DB.prepare("DELETE FROM push_subs WHERE endpoint = ?").bind(sub.endpoint).run();
+  return res.ok;
+}
+async function sendPushToUser(env, userId, data) {
+  const subs = (await env.DB.prepare("SELECT * FROM push_subs WHERE user_id = ?").bind(userId).all()).results;
+  const sent = await Promise.all(subs.map(s => sendPush(env, s, data).catch(() => false)));
+  return sent.filter(Boolean).length;
+}
+// runs every minute: sends each timer due in the next minute at its exact second
+async function fireTimers(env) {
+  const due = (await env.DB.prepare("SELECT * FROM push_timers WHERE fire_at <= ? ORDER BY fire_at").bind(Date.now() + 61e3).all()).results;
+  await Promise.all(due.map(async t => {
+    const wait = t.fire_at - Date.now();
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    const still = await env.DB.prepare("DELETE FROM push_timers WHERE id = ? RETURNING id").bind(t.id).first();   // cancelled meanwhile?
+    if (still) await sendPushToUser(env, t.user_id, { title: t.title, body: t.body, tag: "timer-" + t.id });
+  }));
+  await env.DB.prepare("DELETE FROM push_timers WHERE fire_at < ?").bind(Date.now() - 3600e3).run();
+}
+
 function pngResponse(b64data) {
   const bin = Uint8Array.from(atob(b64data), c => c.charCodeAt(0));
   return new Response(bin, { headers: { "content-type": "image/png", "cache-control": "public, max-age=604800" } });
 }
 
 export default {
-  async fetch(req, env) {
+  async scheduled(event, env, ctx) {
+    bump("requests");
+    try { await ensureSchema(env); await fireTimers(env); } catch {}
+    await flushUsage(env);
+  },
+  async fetch(req, env, ctx) {
+    bump("requests");
+    if (ctx && env.DB) ctx.waitUntil(flushUsage(env));
     const url = new URL(req.url);
     if (!env.DB) return new Response("Setup isn't finished: add a D1 database binding named DB to this Worker (see the setup steps).", { status: 500, headers: { "content-type": "text/plain" } });
     try {
@@ -644,10 +961,16 @@ export default {
       }
       if (url.pathname === "/icon-180.png" || url.pathname === "/apple-touch-icon.png" || url.pathname === "/apple-touch-icon-precomposed.png") return pngResponse(ICON_180);
       if (url.pathname === "/icon-512.png") return pngResponse(ICON_512);
+      if (url.pathname === "/sw.js") return new Response(SW_JS.replace("__VERSION__", APP_VERSION), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
+      if (url.pathname === "/ads.txt") {
+        if (!env.ADSENSE_CLIENT) return new Response("Not found", { status: 404 });
+        return new Response(`google.com, ${env.ADSENSE_CLIENT.replace(/^ca-/, "")}, DIRECT, f08c47fec0942fa0\n`, { headers: { "content-type": "text/plain" } });
+      }
+      if (url.pathname === "/privacy") return new Response(PRIVACY_HTML.replace(/__HOST__/g, url.host), { headers: { "content-type": "text/html; charset=utf-8" } });
       if (url.pathname === "/manifest.webmanifest") {
         return new Response(JSON.stringify({
-          name: "Recipe Box", short_name: "Recipes", start_url: "/", display: "standalone",
-          background_color: "#f4f6f1", theme_color: "#2f5d3a",
+          name: "Recipe Box", short_name: "Recipes", start_url: "/", scope: "/", display: "standalone", orientation: "portrait",
+          background_color: "#ffffff", theme_color: "#ffffff", id: "/",
           icons: [{ src: "/icon-180.png", sizes: "180x180", type: "image/png" }, { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }]
         }), { headers: { "content-type": "application/manifest+json" } });
       }

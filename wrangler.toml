@@ -13,3 +13,7 @@ binding = "AI"
 
 # INVITE_CODE is a Cloudflare secret (Worker → Settings → Variables and Secrets).
 # It is never stored here, and deploys leave it alone.
+
+# Every minute: sends lock-screen timer alerts that are due.
+[triggers]
+crons = ["* * * * *"]

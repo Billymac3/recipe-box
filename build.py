@@ -33,6 +33,8 @@ def icon(size):
 src = (root / "src" / "server.js").read_text()
 html = (root / "src" / "app.html").read_text()
 out = (src.replace("__APP_HTML__", json.dumps(html))
+          .replace("__SW_JS__", json.dumps((root / "src" / "sw.js").read_text()))
+          .replace("__PRIVACY_HTML__", json.dumps((root / "src" / "privacy.html").read_text()))
           .replace("__ICON180__", json.dumps(icon(180)))
           .replace("__ICON512__", json.dumps(icon(512))))
 (root / "dist").mkdir(exist_ok=True)
