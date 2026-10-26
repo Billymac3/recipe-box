@@ -419,7 +419,7 @@ const app = document.getElementById("app"), fab = document.getElementById("fab")
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
   { version: "2.1", items: [
-    "Grocery items without a store now go on the General List, shown first",
+    "Grocery items that can be bought anywhere go in a new Any Store group, shown first",
     "Link a grocery item to the exact product: its name shows in blue with a link icon",
     "Add a photo to a grocery item; tap the item to see the photo full screen",
     "Tap an item's store tag to change its store, link or photo"
@@ -756,7 +756,7 @@ function renderDetail(){
     ${isel ? `<div style="height:210px"></div>
     <div class="selbar" role="toolbar" aria-label="Selected ingredients">
       <div class="selbar-h"><b>${isel.size} selected · add to grocery list</b></div>
-      <div class="chips selchips">${["", ...S.stores].map(st => `<button class="chip" data-iadd="${esc(st)}" ${isel.size ? "" : "disabled"}>→ ${esc(st || "General List")}</button>`).join("")}</div>
+      <div class="chips selchips">${["", ...S.stores].map(st => `<button class="chip" data-iadd="${esc(st)}" ${isel.size ? "" : "disabled"}>→ ${esc(st || "Any Store")}</button>`).join("")}</div>
     </div>` : ""}
     <div class="byline">${who ? `Added by ${esc(who)}` : ""}${r.source_url ? `${who?" · ":""}From <a href="${esc(r.source_url)}" target="_blank" rel="noopener">${esc(r.source_name || "the original")}</a>` : (r.source_name ? ` · From ${esc(r.source_name)}` : "")}${r.tags ? ` · ${esc(r.tags)}` : ""}</div>`;
 }
@@ -1183,10 +1183,10 @@ function renderGrocery(){
   const count = k => open.filter(g => keyOf(g) === k).length;
   const extra = [...new Set(open.map(keyOf).filter(k => k && !known.has(k)))];   // stores removed from the list but still on items
   const order = ["", ...stores, ...extra];
-  const label = k => k || "General List";
+  const label = k => k || "Any Store";
   const sel = S.gSel;
   const row = g => { const r = g.recipe_id && S.recipes.find(x => x.id === g.recipe_id);
-    if (sel) return `<li class="selrow ${sel.has(g.id) ? "on" : ""} ${g.checked ? "done" : ""}" data-gtoggle="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" tabindex="0"><span class="selbox" aria-hidden="true"></span><span class="txt">${esc(g.text)}${r ? `<span class="from">${esc(r.title)}</span>` : ""}</span><span class="stag ${g.store ? "" : "none"}">${esc(g.store || "General")}</span></li>`;
+    if (sel) return `<li class="selrow ${sel.has(g.id) ? "on" : ""} ${g.checked ? "done" : ""}" data-gtoggle="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" tabindex="0"><span class="selbox" aria-hidden="true"></span><span class="txt">${esc(g.text)}${r ? `<span class="from">${esc(r.title)}</span>` : ""}</span><span class="stag ${g.store ? "" : "none"}">${esc(g.store || "Any store")}</span></li>`;
     const from = r ? `<span class="from">${esc(r.title)}</span>` : "";
     const check = `<input class="check" type="checkbox" data-gcheck="${esc(g.id)}" ${g.checked?"checked":""} aria-label="${esc(g.text)}">`;
     // plain items: tapping the name ticks it. Linked items open the link; items with a photo show the photo.
@@ -1196,7 +1196,7 @@ function renderGrocery(){
         ? `<label class="cbox">${check}</label><span class="txt"><button class="gname" data-gimg="${esc(g.id)}">${esc(g.text)}</button>${from}</span>`
         : `<label>${check}<span class="txt">${esc(g.text)}${from}</span></label>`;
     const img = g.photo_id ? `<button class="gimg" data-gimg="${esc(g.id)}" aria-label="Show photo">${ICON.img}</button>` : "";
-    const li = `<li class="${g.checked?"done":""} ${g.link || g.photo_id ? "rich" : ""}" data-lp="g:${esc(g.id)}"><span class="who" aria-hidden="true"><b>${esc(S.people[g.added_by] || "Someone")}</b>${esc(whenText(g.created))}</span>${body}${img}<button class="stag ${g.store ? "" : "none"}" data-gpick="${esc(g.id)}" aria-label="Store, link and photo">${esc(g.store || "General")}</button><button class="x" data-gdel="${esc(g.id)}" aria-label="Remove">×</button></li>`;
+    const li = `<li class="${g.checked?"done":""} ${g.link || g.photo_id ? "rich" : ""}" data-lp="g:${esc(g.id)}"><span class="who" aria-hidden="true"><b>${esc(S.people[g.added_by] || "Someone")}</b>${esc(whenText(g.created))}</span>${body}${img}<button class="stag ${g.store ? "" : "none"}" data-gpick="${esc(g.id)}" aria-label="Store, link and photo">${esc(g.store || "Any store")}</button><button class="x" data-gdel="${esc(g.id)}" aria-label="Remove">×</button></li>`;
     if (S.gPick !== g.id) return li;
     return li + `<li class="pickrow"><div class="pr-sec"><span class="pr-h">Buy at</span><div class="pr-chips">${["", ...stores].map(st => `<button class="chip" data-gset="${esc(st)}" data-gid="${esc(g.id)}" aria-pressed="${keyOf(g) === st}">${esc(label(st))}</button>`).join("")}</div></div>
       <div class="pr-sec"><label class="pr-h" for="gl-${esc(g.id)}">Link to the exact item</label>
@@ -1225,13 +1225,13 @@ function renderGrocery(){
     ${sel ? `<p class="small muted" style="margin:0 0 6px">Tap items to select them, then choose a store below.</p>` : (S.grocery.length ? `<p class="hint" style="margin:0 0 4px">Swipe left on the list to see who added each item.</p>` : "")}
     <div class="chips" role="toolbar" aria-label="Show store" style="padding-top:0">
       <button class="chip" data-gstore="All" aria-pressed="${S.gStore === "All"}">All · ${open.length}</button>
-      <button class="chip" data-gstore="" aria-pressed="${S.gStore === ""}">General List${count("") ? " · " + count("") : ""}</button>
+      <button class="chip" data-gstore="" aria-pressed="${S.gStore === ""}">Any Store${count("") ? " · " + count("") : ""}</button>
       ${[...stores, ...extra].map(st => `<button class="chip" data-gstore="${esc(st)}" aria-pressed="${S.gStore === st}">${esc(st)}${count(st) ? " · " + count(st) : ""}</button>`).join("")}
 
     </div>
     <form class="g-add" id="gform" style="margin-top:10px" ${sel ? "hidden" : ""}>
       <input id="g-new" class="inp" placeholder="Add an item" autocomplete="off">
-      <select id="g-store" class="inp gsel" aria-label="Store for new item"><option value="">General List</option>${stores.map(st => `<option ${addStore === st ? "selected" : ""}>${esc(st)}</option>`).join("")}</select>
+      <select id="g-store" class="inp gsel" aria-label="Store for new item"><option value="">Any Store</option>${stores.map(st => `<option ${addStore === st ? "selected" : ""}>${esc(st)}</option>`).join("")}</select>
       <button class="btn primary">Add</button>
     </form>
     ${!S.grocery.length ? `<div class="empty"><h2>Nothing on the list</h2><p>Add items here, or tap Groceries on any recipe to add its ingredients. Tap an item's store tag to change its store or add a link or photo. Press and hold to select several at once.</p></div>` : ""}
@@ -1240,7 +1240,7 @@ function renderGrocery(){
     ${sel ? `<div style="height:210px"></div>
     <div class="selbar" role="toolbar" aria-label="Selected items">
       <div class="selbar-h"><b>${sel.size} selected</b>${sel.size ? `<button class="btn ghost danger-t" data-act="gselrm">${S.gRmConfirm ? "Tap again to remove " + sel.size : "Remove"}</button>` : ""}</div>
-      <div class="chips selchips">${["", ...stores].map(st => `<button class="chip" data-gmove="${esc(st)}" ${sel.size ? "" : "disabled"}>→ ${esc(st || "General List")}</button>`).join("")}</div>
+      <div class="chips selchips">${["", ...stores].map(st => `<button class="chip" data-gmove="${esc(st)}" ${sel.size ? "" : "disabled"}>→ ${esc(st || "Any Store")}</button>`).join("")}</div>
     </div>` : ""}
     <div class="btn-row" style="margin-top:14px" ${sel ? "hidden" : ""}>
       ${S.grocery.some(g => g.checked) ? `<button class="btn" data-act="gclear">Clear checked items</button>` : ""}
@@ -1520,7 +1520,7 @@ app.addEventListener("click", async e => {
       S.grocery.forEach(g => { if (S.gSel.has(g.id)) g.store = d.gmove || null; });
       S.gSel = new Set(); S.gRmConfirm = false; renderGrocery();
       await api("/api/grocery/bulk", { method: "POST", body: { ids, store: d.gmove } });
-      return toast(`Moved ${ids.length} ${ids.length === 1 ? "item" : "items"} to ${d.gmove || "the General List"}`);
+      return toast(`Moved ${ids.length} ${ids.length === 1 ? "item" : "items"} to ${d.gmove || "Any Store"}`);
     }
     if (d.gimg) { const g = S.grocery.find(x => x.id === d.gimg); if (g && g.photo_id) openPhoto(photoUrl(g.photo_id), g.text); return; }
     if (d.glink || d.glinkrm) {
