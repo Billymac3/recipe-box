@@ -114,6 +114,16 @@ async function currentUser(req, env) {
 }
 
 /* ---------------- recipe import ---------------- */
+/*__PARSE_JS__*/
+// a recipe sorted without AI, in the same shape the AI returns
+function sorted(text, url, image, titleHint) {
+  const r = parseRecipeText(text);
+  if (titleHint && (r.title === "Untitled recipe" || r.title.length < 3)) r.title = titleHint.slice(0, 140);
+  return { ok: r.usable, confident: r.confident, recipe: { title: r.title, category: "Other", prep_min: r.prep_min, cook_min: r.cook_min, servings: r.servings,
+    ingredients: r.ingredients, steps: r.steps, notes: r.notes, tags: "", source_url: url || "", source_name: url ? siteName(url) : "", image_url: image || "" } };
+}
+const nextReset = () => { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d.getTime(); };
+const AI_LIMIT_MSG = "Today's free AI recipe reading is used up.";
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", deg: "°", frac12: "½", frac14: "¼", frac34: "¾", ndash: "–", mdash: "—", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…", eacute: "é", egrave: "è", ntilde: "ñ", reg: "®", trade: "™", copy: "©" };
 function decodeEntities(s) {
   return String(s ?? "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+\d*);/gi, (m, e) => {
@@ -300,10 +310,16 @@ async function importFromUrl(env, rawUrl) {
   if (social) {
     const s = await socialText(url);
     if (s.text.replace(/\s/g, "").length > 60) {
+      const quick = sorted(s.text, url.href, s.image);
+      if (quick.confident) return { recipe: quick.recipe, method: "sorted" };
       try {
         const ai = await aiFromText(env, s.text, url.href, s.image);
         if (ai) return { recipe: ai, method: "caption" };
-      } catch (e) { if (aiError(e)) return { error: aiError(e) }; }
+      } catch (e) {
+        if (isLimit(e)) return quick.ok ? { recipe: quick.recipe, method: "sorted", aiLimit: true, resetAt: nextReset() } : limitOut({ needsPaste: true, source_url: url.href });
+        if (aiError(e)) return { error: aiError(e) };
+      }
+      if (quick.ok) return { recipe: quick.recipe, method: "sorted" };
     }
     return { error: s.text ? "The post's caption didn't include the full recipe, or it was cut short. Tap \"more\" on the caption, take screenshots while you scroll, and add them all at once." : "That post's caption isn't readable from the link. Tap \"more\" on the caption, take screenshots while you scroll, and add them all at once.", needsPaste: true, source_url: url.href };
   }
@@ -321,7 +337,15 @@ async function importFromUrl(env, rawUrl) {
       try {
         const ai = await aiFromText(env, body, finalUrl, image);
         if (ai) return { recipe: ai, method: "ai" };
-      } catch (e) { if (String(e.message) === "ai_missing") return { error: "Recipe reading isn't switched on yet. Add the Workers AI binding named AI (see setup)." }; }
+      } catch (e) {
+        if (isLimit(e)) {
+          // no AI left: look for the recipe part of the page by its headings
+          const t = pageText(page.html), at = t.search(/\n\s*(?:ingredients?|what you(?:'|’)?ll need)\s*:?\s*\n/i);
+          const quick = at >= 0 ? sorted(t.slice(at, at + 12000), finalUrl, image, title) : { ok: false };
+          return quick.ok ? { recipe: quick.recipe, method: "sorted", aiLimit: true, resetAt: nextReset() } : limitOut({ needsPaste: true, source_url: url.href });
+        }
+        if (aiError(e)) return { error: aiError(e) };
+      }
     }
   }
   if (social) return { error: "This post's recipe isn't readable from the link. Social sites often hide captions. Copy the caption (or take a screenshot) and paste it in the app instead.", needsPaste: true, source_url: url.href };
@@ -355,7 +379,10 @@ async function insertRecipe(env, user, data) {
 const ABC_LOWER = "abcdefghijkmnpqrstuvwxyz23456789";
 const token16 = () => [...crypto.getRandomValues(new Uint8Array(16))].map(x => ABC_LOWER[x % ABC_LOWER.length]).join("");
 const validEmail = e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
-const aiError = e => String(e && e.message) === "ai_missing" ? "Recipe reading isn't switched on yet. Add the Workers AI binding named AI (see setup)." : null;
+const aiError = e => String(e && e.message) === "ai_missing" ? "Recipe reading isn't switched on yet. Add the Workers AI binding named AI (see setup)."
+  : String(e && e.message) === "ai_limit" ? AI_LIMIT_MSG : null;
+const isLimit = e => String(e && e.message) === "ai_limit";
+const limitOut = extra => ({ error: AI_LIMIT_MSG, aiLimit: true, resetAt: nextReset(), ...extra });
 
 async function api(req, env, url) {
   const p = url.pathname, m = req.method;
@@ -571,17 +598,25 @@ async function api(req, env, url) {
     const b = await body();
     const text = String(b.text || "").trim();
     if (text.length < 20) return json({ error: "Paste a bit more of the recipe first." });
+    const src = String(b.source_url || ""), img = String(b.image_url || "");
+    const quick = sorted(text, src, img);
+    if (quick.confident && !b.forceAI) return json({ recipe: quick.recipe, method: "sorted" });   // clearly laid out: no AI needed
     try {
-      const r = await aiFromText(env, text, String(b.source_url || ""), String(b.image_url || ""));
-      return json(r ? { recipe: r, method: "ai" } : { error: "Couldn't find ingredients in that text. If the recipe is only spoken in the video, it can't be read automatically; type it in instead." });
-    } catch (e) { return json({ error: aiError(e) || "The recipe reader is busy. Try again in a minute." }); }
+      const r = await aiFromText(env, text, src, img);
+      if (r) return json({ recipe: r, method: "ai" });
+      return json(quick.ok ? { recipe: quick.recipe, method: "sorted" } : { error: "Couldn't find ingredients in that text. If the recipe is only spoken in the video, it can't be read automatically; type it in instead." });
+    } catch (e) {
+      if (isLimit(e)) return json(quick.ok ? { recipe: quick.recipe, method: "sorted", aiLimit: true, resetAt: nextReset() } : limitOut());
+      if (quick.ok) return json({ recipe: quick.recipe, method: "sorted" });
+      return json({ error: aiError(e) || "The recipe reader is having trouble right now. Try again in a minute." });
+    }
   }
   // screenshots: each one is read to plain text; the app then joins them and imports the text
   if (p === "/api/import/ocr" && m === "POST") {
     const buf = new Uint8Array(await req.arrayBuffer());
     if (!buf.length || buf.length > 6_000_000) return json({ error: "That image is too large. Try a screenshot instead of a full photo." });
     try { return json({ text: await ocrImage(env, buf) }); }
-    catch (e) { return json({ error: aiError(e) || "Couldn't read that image right now. Try again." }); }
+    catch (e) { return json(isLimit(e) ? limitOut({ screenshots: true }) : { error: aiError(e) || "Couldn't read that image right now. Try again." }); }
   }
   if (p === "/api/import/image" && m === "POST") {
     const buf = new Uint8Array(await req.arrayBuffer());
@@ -589,7 +624,7 @@ async function api(req, env, url) {
     try {
       const r = await aiFromImage(env, buf);
       return json(r ? { recipe: r, method: "ai" } : { error: "Couldn't read a recipe from that image. Make sure the ingredients are visible, or paste the text instead." });
-    } catch (e) { return json({ error: aiError(e) || "Couldn't read that image right now. Try again, or paste the text instead." }); }
+    } catch (e) { return json(isLimit(e) ? limitOut({ screenshots: true }) : { error: aiError(e) || "Couldn't read that image right now. Try again, or paste the text instead." }); }
   }
   // iPhone Shortcut: save straight from the Share sheet
   if (p === "/api/quicksave" && m === "POST") {
@@ -600,7 +635,12 @@ async function api(req, env, url) {
     const link = (input.match(/https?:\/\/\S+/) || [""])[0];
     let result;
     if (link && input.replace(link, "").trim().length < 40) result = await importFromUrl(env, link);
-    else { try { const r = await aiFromText(env, input, link, ""); result = r ? { recipe: r } : { error: "No recipe found in that." }; } catch { result = { error: "The recipe reader is busy. Try again." }; } }
+    else {
+      const quick = sorted(input, link, "");
+      if (quick.confident) result = { recipe: quick.recipe };
+      else { try { const r = await aiFromText(env, input, link, ""); result = r ? { recipe: r } : quick.ok ? { recipe: quick.recipe } : { error: "No recipe found in that." }; }
+        catch (e) { result = quick.ok ? { recipe: quick.recipe } : { error: isLimit(e) ? AI_LIMIT_MSG + " Open the app and paste the recipe instead." : "The recipe reader is having trouble. Try again." }; } }
+    }
     if (!result.recipe) return new Response("Not saved: " + result.error, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
     await insertRecipe(env, user, result.recipe);
     return new Response("Saved “" + result.recipe.title + "” to the recipe box", { headers: { "content-type": "text/plain; charset=utf-8" } });
@@ -789,7 +829,11 @@ async function usageToday(env) {
 // Workers AI bills in "neurons"; these are Cloudflare's published per-million-token rates for the two models used
 const NEURON_RATES = { [TEXT_MODEL]: [26668, 204805], [VISION_MODEL]: [4410, 61493] };
 async function runAI(env, model, input, promptChars) {
-  const out = await env.AI.run(model, input);
+  const used = (await env.DB.prepare("SELECT n FROM usage WHERE day = ? AND key = 'neurons'").bind(utcDay()).first()) || { n: 0 };
+  if ((used.n || 0) + (usageBuf.neurons || 0) >= LIMITS.neurons * 0.99) throw new Error("ai_limit");
+  let out;
+  try { out = await env.AI.run(model, input); }
+  catch (e) { if (/4006|daily free allocation|neuron|quota|exceeded/i.test(String(e && e.message))) throw new Error("ai_limit"); throw e; }
   const u = out && out.usage, rate = NEURON_RATES[model] || [30000, 200000];
   const pin = u && u.prompt_tokens || Math.ceil(promptChars / 4), pout = u && u.completion_tokens || Math.ceil(String(out && out.response || "").length / 4);
   bump("neurons", (pin * rate[0] + pout * rate[1]) / 1e6);

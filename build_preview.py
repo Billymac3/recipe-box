@@ -86,6 +86,7 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     let mt = p.match(/^\/api\/recipes\/(\w+)$/);
     if (mt && m === "PUT") { const r = db.recipes.find(x => x.id === mt[1]); Object.assign(r, body, { favorite: body.favorite === undefined ? r.favorite : (body.favorite ? 1 : 0) }); return ok({ recipe: r }); }
     if (mt && m === "DELETE") { db.recipes = db.recipes.filter(x => x.id !== mt[1]); return ok({ ok: true }); }
+    if (p === "/api/import/text") { await wait(400); const r = parseRecipeText(body.text || ""); if (r.usable) return ok({ recipe: { ...r, source_url: body.source_url || "", source_name: "" }, method: "sorted" }); }
     if (p.startsWith("/api/import/")) { await wait(1200); return ok({ recipe: { title: "Example Imported Recipe", category: "Mains", prep_min: 10, cook_min: 20, servings: "4", ingredients: "1 lb pasta\n2 cups marinara sauce\n½ cup parmesan", steps: "Boil the pasta for 10 minutes.\nWarm the sauce and toss with the pasta.\nTop with parmesan.", notes: "In this preview every import returns this example.", tags: "", source_url: "", source_name: "preview" } }); }
     if (p === "/api/photos") { const id = "p" + uid(); window.PREVIEW_PHOTOS[id] = "data:image/jpeg;base64," + body.data; return ok({ id }); }
     if (p === "/api/grocery" && m === "GET") return ok({ items: [...db.grocery].sort((a,b) => a.checked - b.checked || a.created - b.created), stores: db.stores });
@@ -125,7 +126,7 @@ head = head.replace("<title>Recipe Box</title>", "<title>Recipe Box Preview</tit
 # the preview runs inside a frame that already pads for the phone's notch
 head = head.replace("padding-top:env(safe-area-inset-top,0px)}", "}", 1)
 main_script_at = body.index("<script>\n\"use strict\";")
-body = body[:main_script_at] + MOCK + body[main_script_at:]
+body = body[:main_script_at] + "<script>" + (root / "src" / "parse.js").read_text() + "</script>\n" + MOCK + body[main_script_at:]
 body = body.replace('<div class="wrap" id="app">', BANNER + '<div class="wrap" id="app">', 1)
 out = head.strip() + "\n" + body.strip() + "\n"
 (root / "dist" / "preview.html").write_text(out)

@@ -507,6 +507,8 @@ const CHANGELOG = [
     "Works offline: recipes you've opened stay readable with no signal",
     "Instagram and Facebook links now try harder to read the full caption",
     "Import up to 6 screenshots at once for long captions",
+    "Neatly laid-out recipes are sorted without AI, and adding recipes keeps working even when the day's free AI is used up",
+    "A clear message, with the reset time, when the day's free AI recipe reading runs out",
     "Feels more like an app: launch screen, no accidental zooming or page bounce, smoother tab changes",
     "A privacy page, linked from the Me tab"
   ] },
@@ -1150,7 +1152,7 @@ function renderImport(){
       <button type="button" class="btn primary block" data-act="impurl" ${I.busy?"disabled":""}>${I.busy==="url" ? `<span class="spinner"></span> Reading the page…` : "Get recipe"}</button>
       ${I.msg ? `<div class="msg ${I.err?"err":""}">${esc(I.msg)}</div>` : ""}
       <div class="or">or</div>
-      <div class="field"><label for="impText">Paste the caption or recipe text</label><span class="hint">Copied a caption? Paste it here.</span><textarea id="impText" style="min-height:120px" placeholder="Paste here">${esc(I.text)}</textarea></div>
+      <div class="field"><label for="impText">Paste the caption or recipe text</label><span class="hint">Copied a caption or recipe? Paste it here. If it has "Ingredients" and "Instructions" headings, it's sorted without using any AI.</span><textarea id="impText" style="min-height:120px" placeholder="Paste here">${esc(I.text)}</textarea></div>
       <button type="button" class="btn block" data-act="imptext" ${I.busy?"disabled":""}>${I.busy==="text" ? `<span class="spinner"></span> Reading the text…` : "Read this text"}</button>
       <div class="or">or</div>
       <div class="field"><label for="impImg">Screenshots or photos</label><span class="hint">Pick up to 6 at once. For a long Instagram or Facebook caption, tap "more", then screenshot as you scroll. They're read in the order you pick them.</span><input id="impImg" type="file" accept="image/*" multiple ${I.busy?"disabled":""}></div>
@@ -1162,10 +1164,19 @@ function renderImport(){
   document.getElementById("impText").addEventListener("input", e => I.text = e.target.value);
   document.getElementById("impImg").addEventListener("change", e => { const fs = [...e.target.files].slice(0, 6); if (fs.length) importImages(fs); });
 }
-function gotDraft(recipe){
+function gotDraft(recipe, out){
   S.draft = recipe; S.id = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.removePhoto = false;
   S.imp = { url: "", text: "", busy: "", msg: "", err: false, source_url: "" };
-  render(); window.scrollTo(0,0); toast("Check it over, then tap Save");
+  render(); window.scrollTo(0,0);
+  toast(out && out.aiLimit ? "Sorted without AI (today's AI is used up). Check it over, then Save." : out && out.method === "sorted" ? "Sorted without AI. Check it over, then Save." : "Check it over, then tap Save");
+}
+const resetTime = ms => new Date(ms || Date.now()).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+// what to say when the day's free AI is used up and the sorter couldn't help
+function limitMsg(out){
+  const base = `${out.error} It comes back at ${resetTime(out.resetAt)}.`;
+  return out.screenshots
+    ? `${base} Reading screenshots needs AI. On iPhone you can copy text straight from a screenshot: open it in Photos, press and hold on the words, tap Select All, then Copy, and paste it in the text box. That's sorted without AI.`
+    : `${base} Paste the recipe text in the box below instead. Text with "Ingredients" and "Instructions" headings is sorted without AI.`;
 }
 async function importUrl(){
   const I = S.imp; const url = I.url.trim();
@@ -1174,8 +1185,8 @@ async function importUrl(){
   try {
     const out = await api("/api/import/url", { method: "POST", body: { url } });
     I.busy = "";
-    if (out.recipe) return gotDraft(out.recipe);
-    I.msg = out.error; I.err = true; I.source_url = out.source_url || url;
+    if (out.recipe) return gotDraft(out.recipe, out);
+    I.msg = out.aiLimit ? limitMsg(out) : out.error; I.err = true; I.source_url = out.source_url || url;
   } catch (e) { I.busy = ""; I.msg = e.message; I.err = true; }
   renderImport();
 }
@@ -1186,8 +1197,8 @@ async function importText(){
   try {
     const out = await api("/api/import/text", { method: "POST", body: { text: I.text, source_url: I.url.trim() || I.source_url } });
     I.busy = "";
-    if (out.recipe) return gotDraft(out.recipe);
-    I.msg = out.error; I.err = true;
+    if (out.recipe) return gotDraft(out.recipe, out);
+    I.msg = out.aiLimit ? limitMsg(out) + " Or tap Type it in yourself." : out.error; I.err = true;
   } catch (e) { I.busy = ""; I.msg = e.message; I.err = true; }
   renderImport();
 }
@@ -1207,6 +1218,7 @@ async function importImages(files){
       I.progress = files.length > 1 ? `Reading screenshot ${i + 1} of ${files.length}…` : "Reading the image…"; renderImport();
       let blob; try { blob = await shrink(files[i], 1600, 0.85); } catch { blob = files[i]; }
       const out = await api("/api/import/ocr", { method: "POST", body: blob });
+      if (out.aiLimit) { I.busy = ""; I.msg = limitMsg(out); I.err = true; return renderImport(); }
       if (out.error) throw new Error(out.error);
       if (out.text) parts.push(out.text);
     }
@@ -1215,8 +1227,8 @@ async function importImages(files){
     I.progress = "Turning it into a recipe…"; renderImport();
     const out = await api("/api/import/text", { method: "POST", body: { text, source_url: I.url.trim() || I.source_url || "" } });
     I.busy = "";
-    if (out.recipe) { if (out.recipe.source_url && !out.recipe.source_name) { try { out.recipe.source_name = new URL(out.recipe.source_url).hostname.replace(/^www\./, ""); } catch {} } return gotDraft(out.recipe); }
-    I.msg = out.error; I.err = true;
+    if (out.recipe) { if (out.recipe.source_url && !out.recipe.source_name) { try { out.recipe.source_name = new URL(out.recipe.source_url).hostname.replace(/^www\./, ""); } catch {} } return gotDraft(out.recipe, out); }
+    I.msg = out.aiLimit ? limitMsg(out) : out.error; I.err = true;
   } catch (e) { I.busy = ""; I.msg = e.message; I.err = true; }
   renderImport();
 }
