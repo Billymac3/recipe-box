@@ -423,8 +423,11 @@ const seenVersion = () => { try { return localStorage.getItem("rb-seen-version")
 function markSeen(){ try { localStorage.setItem("rb-seen-version", S.version || CHANGELOG[0].version); } catch {} }
 function newsBanner(){
   const cur = S.version || CHANGELOG[0].version;
-  const seen = seenVersion();
-  if (!seen) { markSeen(); return ""; }                 // brand-new phone: nothing to announce yet
+  let seen = seenVersion();
+  if (!seen) {
+    if (S.justJoined) { markSeen(); return ""; }       // brand-new account: nothing to announce yet
+    seen = "1.0";                                       // phones from before 2.0 never stored a version
+  }
   if (seen === cur) return "";
   const entry = CHANGELOG.find(v => v.version === cur);
   return `<div class="news" role="status"><div><b>Recipe Box was updated</b><span>${entry ? entry.items.length + " changes in version " + esc(cur) : "Version " + esc(cur)}</span></div><button class="btn primary" data-act="news">See what's new</button><button class="x" data-act="newsx" aria-label="Dismiss">×</button></div>`;
@@ -613,6 +616,7 @@ function renderAuth(){
     try {
       if (signup) await api("/api/signup", { method: "POST", body: { name: v("a-name"), email: v("a-email"), password: v("a-pw"), invite: v("a-inv"), inviteToken: inv ? INVITE : undefined } });
       else await api("/api/login", { method: "POST", body: { email: v("a-email"), password: v("a-pw") } });
+      if (signup) S.justJoined = true;
       S.authMsg = ""; app.innerHTML = `<div class="empty"><h2>Opening the recipe box…</h2></div>`; boot();
     } catch (err) { S.authMsg = err.message; renderAuth(); }
   });
