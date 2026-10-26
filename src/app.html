@@ -322,6 +322,16 @@ ol.howto{padding-left:1.3em;margin:8px 0;display:grid;gap:6px}
 .lightbox figcaption{color:#fff;font-weight:700;text-align:center}
 .lb-x{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:max(12px,env(safe-area-inset-right,0px))}
 
+.editrow{gap:10px}
+.editrow.on{background:var(--accent-soft)}
+.editrow .txt{flex:1;min-width:0;display:grid}
+.selbtn{border:0;background:none;padding:4px;margin:-4px;flex:none;display:grid}
+.editrow.on .selbox{background:var(--accent-ink)}
+.editrow.on .selbox::after{content:"";width:7px;height:12px;border:solid var(--card);border-width:0 3px 3px 0;transform:translateY(-1px) rotate(45deg)}
+.gedit{border:1.5px solid var(--line);background:var(--bg);border-radius:10px;padding:8px 10px;width:100%;min-width:0;font-size:16px}
+.gedit:focus{border-color:var(--accent-ink);outline:none;background:var(--card)}
+.editrow.done .gedit{color:var(--muted)}
+
 /* tab bar */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1.5px solid var(--line);
   display:grid;grid-template-columns:repeat(4,1fr);padding-bottom:env(safe-area-inset-bottom,0px);
@@ -418,6 +428,10 @@ const app = document.getElementById("app"), fab = document.getElementById("fab")
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "2.2", items: [
+    "On the grocery list, Select is now Edit: fix an item's name right in the list",
+    "You can also rename an item from its store tag panel"
+  ] },
   { version: "2.1", items: [
     "Grocery items that can be bought anywhere go in a new Any Store group, shown first",
     "Link a grocery item to the exact product: its name shows in blue with a link icon",
@@ -1186,7 +1200,8 @@ function renderGrocery(){
   const label = k => k || "Any Store";
   const sel = S.gSel;
   const row = g => { const r = g.recipe_id && S.recipes.find(x => x.id === g.recipe_id);
-    if (sel) return `<li class="selrow ${sel.has(g.id) ? "on" : ""} ${g.checked ? "done" : ""}" data-gtoggle="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" tabindex="0"><span class="selbox" aria-hidden="true"></span><span class="txt">${esc(g.text)}${r ? `<span class="from">${esc(r.title)}</span>` : ""}</span><span class="stag ${g.store ? "" : "none"}">${esc(g.store || "Any store")}</span></li>`;
+    // edit mode: the circle selects, the name is a text box you can fix in place
+    if (sel) return `<li class="editrow ${sel.has(g.id) ? "on" : ""} ${g.checked ? "done" : ""}"><button class="selbtn" data-gtoggle="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" aria-label="Select ${esc(g.text)}"><span class="selbox" aria-hidden="true"></span></button><span class="txt"><input class="gedit" data-gedit="${esc(g.id)}" value="${esc(g.text)}" maxlength="300" enterkeyhint="done" aria-label="Item name" autocomplete="off" spellcheck="true">${r ? `<span class="from">${esc(r.title)}</span>` : ""}</span><span class="stag ${g.store ? "" : "none"}">${esc(g.store || "Any store")}</span></li>`;
     const from = r ? `<span class="from">${esc(r.title)}</span>` : "";
     const check = `<input class="check" type="checkbox" data-gcheck="${esc(g.id)}" ${g.checked?"checked":""} aria-label="${esc(g.text)}">`;
     // plain items: tapping the name ticks it. Linked items open the link; items with a photo show the photo.
@@ -1199,6 +1214,8 @@ function renderGrocery(){
     const li = `<li class="${g.checked?"done":""} ${g.link || g.photo_id ? "rich" : ""}" data-lp="g:${esc(g.id)}"><span class="who" aria-hidden="true"><b>${esc(S.people[g.added_by] || "Someone")}</b>${esc(whenText(g.created))}</span>${body}${img}<button class="stag ${g.store ? "" : "none"}" data-gpick="${esc(g.id)}" aria-label="Store, link and photo">${esc(g.store || "Any store")}</button><button class="x" data-gdel="${esc(g.id)}" aria-label="Remove">×</button></li>`;
     if (S.gPick !== g.id) return li;
     return li + `<li class="pickrow"><div class="pr-sec"><span class="pr-h">Buy at</span><div class="pr-chips">${["", ...stores].map(st => `<button class="chip" data-gset="${esc(st)}" data-gid="${esc(g.id)}" aria-pressed="${keyOf(g) === st}">${esc(label(st))}</button>`).join("")}</div></div>
+      <div class="pr-sec"><label class="pr-h" for="gn-${esc(g.id)}">Name</label>
+        <input id="gn-${esc(g.id)}" class="inp gedit" data-gedit="${esc(g.id)}" value="${esc(g.text)}" maxlength="300" enterkeyhint="done" autocomplete="off"></div>
       <div class="pr-sec"><label class="pr-h" for="gl-${esc(g.id)}">Link to the exact item</label>
         <div class="urlrow"><input id="gl-${esc(g.id)}" class="inp" type="url" inputmode="url" autocapitalize="off" placeholder="Paste a product link" value="${esc(g.link || "")}"><button class="btn" data-glink="${esc(g.id)}">Save</button></div>
         ${g.link ? `<button class="linkbtn" data-glinkrm="${esc(g.id)}">Remove link</button>` : ""}</div>
@@ -1221,8 +1238,8 @@ function renderGrocery(){
   app.innerHTML = `
     <div class="top"><div><div class="eyebrow">Shared list</div><h1>Groceries</h1></div>
       ${sel ? `<button class="btn primary" data-act="gseldone">Done</button>`
-            : `<div class="top-r"><span class="count">${(S.gStore === "All" ? open.length : count(S.gStore))} to get</span>${S.grocery.length ? `<button class="btn" data-act="gselect">Select</button>` : ""}</div>`}</div>
-    ${sel ? `<p class="small muted" style="margin:0 0 6px">Tap items to select them, then choose a store below.</p>` : (S.grocery.length ? `<p class="hint" style="margin:0 0 4px">Swipe left on the list to see who added each item.</p>` : "")}
+            : `<div class="top-r"><span class="count">${(S.gStore === "All" ? open.length : count(S.gStore))} to get</span>${S.grocery.length ? `<button class="btn" data-act="gselect">Edit</button>` : ""}</div>`}</div>
+    ${sel ? `<p class="small muted" style="margin:0 0 6px">Tap a name to fix it. Tap the circles to select items, then move or remove them below.</p>` : (S.grocery.length ? `<p class="hint" style="margin:0 0 4px">Swipe left on the list to see who added each item.</p>` : "")}
     <div class="chips" role="toolbar" aria-label="Show store" style="padding-top:0">
       <button class="chip" data-gstore="All" aria-pressed="${S.gStore === "All"}">All · ${open.length}</button>
       <button class="chip" data-gstore="" aria-pressed="${S.gStore === ""}">Any Store${count("") ? " · " + count("") : ""}</button>
@@ -1381,6 +1398,19 @@ async function toggleWake(){
 function openRecipe(id){ S.iSel = null; S.tab = "recipes"; S.id = id; S.view = "detail"; S.scale = 1; S.planPick = false; render(); window.scrollTo(0,0); }
 function openNew(){ S.tab = "recipes"; S.id = null; S.draft = null; S.view = "import"; render(); window.scrollTo(0,0); }
 fab.addEventListener("click", openNew);
+
+/* ---------- grocery name edits ---------- */
+app.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("input[data-gedit]")) { e.preventDefault(); e.target.blur(); } });
+app.addEventListener("change", async e => {
+  const inp = e.target.closest("input[data-gedit]"); if (!inp) return;
+  const g = S.grocery.find(x => x.id === inp.dataset.gedit); if (!g) return;
+  const text = inp.value.trim();
+  if (!text) { inp.value = g.text; return toast("An item needs a name."); }
+  if (text === g.text) return;
+  const before = g.text; g.text = text;
+  try { await api("/api/grocery/" + g.id, { method: "PUT", body: { text } }); toast("Renamed"); }
+  catch (err) { g.text = before; inp.value = before; toast(err.message); }
+});
 
 /* ---------- grocery photos ---------- */
 app.addEventListener("change", async e => {

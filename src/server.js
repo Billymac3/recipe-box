@@ -8,7 +8,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "2.1";
+const APP_VERSION = "2.2";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -540,6 +540,11 @@ async function api(req, env, url) {
   mt = p.match(/^\/api\/grocery\/([\w-]+)$/);
   if (mt && m === "PUT") {
     const b = await body();
+    if ("text" in b) {
+      const text = String(b.text || "").trim().slice(0, 300);
+      if (!text) return err("An item needs a name.");
+      await env.DB.prepare("UPDATE grocery SET text = ? WHERE id = ?").bind(text, mt[1]).run();
+    }
     if ("checked" in b) await env.DB.prepare("UPDATE grocery SET checked = ? WHERE id = ?").bind(b.checked ? 1 : 0, mt[1]).run();
     if ("store" in b) {
       const st = b.store ? String(b.store).slice(0, 40) : null;
