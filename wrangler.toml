@@ -1,0 +1,15 @@
+# Cloudflare deploys this Worker automatically whenever main changes on GitHub.
+name = "recipe-box"
+main = "dist/worker.js"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "recipe-box"
+database_id = "771b3e62-b8b4-4da1-8a5e-452efa3f2e95"
+
+[ai]
+binding = "AI"
+
+# INVITE_CODE is a Cloudflare secret (Worker → Settings → Variables and Secrets).
+# It is never stored here, and deploys leave it alone.
