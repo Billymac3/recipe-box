@@ -8,7 +8,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "2.0";
+const APP_VERSION = "2.1";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -25,7 +25,9 @@ const SCHEMA = [
 // columns added after the first release; adding one that already exists just errors and is ignored
 const MIGRATIONS = [`ALTER TABLE grocery ADD COLUMN store TEXT`,
   `CREATE TABLE IF NOT EXISTS reset_codes (code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS invites (token_hash TEXT PRIMARY KEY, created_by TEXT NOT NULL, expires INTEGER NOT NULL, used_by TEXT)`];
+  `CREATE TABLE IF NOT EXISTS invites (token_hash TEXT PRIMARY KEY, created_by TEXT NOT NULL, expires INTEGER NOT NULL, used_by TEXT)`,
+  `ALTER TABLE grocery ADD COLUMN link TEXT`,
+  `ALTER TABLE grocery ADD COLUMN photo_id TEXT`];
 const DEFAULT_STORES = ["Costco","Walmart","Aldi","Kroger","Meijer","Target","Sam's Club"];
 let schemaReady = false;
 async function ensureSchema(env) {
@@ -515,6 +517,7 @@ async function api(req, env, url) {
     const ids = (Array.isArray(b.ids) ? b.ids : []).map(String).filter(x => /^[\w-]+$/.test(x)).slice(0, 500);
     if (!ids.length) return json({ changed: 0 });
     const st = b.store ? String(b.store).slice(0, 40) : null;
+    if (b.remove) await env.DB.batch(ids.map(id => env.DB.prepare("DELETE FROM photos WHERE id = (SELECT photo_id FROM grocery WHERE id = ?)").bind(id)));
     await env.DB.batch(ids.map(id => b.remove
       ? env.DB.prepare("DELETE FROM grocery WHERE id = ?").bind(id)
       : env.DB.prepare("UPDATE grocery SET store = ? WHERE id = ?").bind(st, id)));
@@ -528,7 +531,10 @@ async function api(req, env, url) {
   }
   if (p === "/api/grocery/clear" && m === "POST") {
     const b = await body();
-    await env.DB.prepare(b.all ? "DELETE FROM grocery" : "DELETE FROM grocery WHERE checked = 1").run();
+    const where = b.all ? "" : " WHERE checked = 1";
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM photos WHERE id IN (SELECT photo_id FROM grocery${where ? where + " AND" : " WHERE"} photo_id IS NOT NULL)`),
+      env.DB.prepare("DELETE FROM grocery" + where)]);
     return json({ ok: true });
   }
   mt = p.match(/^\/api\/grocery\/([\w-]+)$/);
@@ -539,9 +545,25 @@ async function api(req, env, url) {
       const st = b.store ? String(b.store).slice(0, 40) : null;
       await env.DB.prepare("UPDATE grocery SET store = ? WHERE id = ?").bind(st, mt[1]).run();
     }
+    if ("link" in b) {
+      let link = String(b.link || "").trim().slice(0, 2000);
+      if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
+      try { if (link) new URL(link); } catch { return err("That doesn't look like a web link."); }
+      await env.DB.prepare("UPDATE grocery SET link = ? WHERE id = ?").bind(link || null, mt[1]).run();
+    }
+    if ("photo_id" in b) {
+      const old = await env.DB.prepare("SELECT photo_id FROM grocery WHERE id = ?").bind(mt[1]).first();
+      await env.DB.prepare("UPDATE grocery SET photo_id = ? WHERE id = ?").bind(b.photo_id ? String(b.photo_id).slice(0, 40) : null, mt[1]).run();
+      if (old && old.photo_id && old.photo_id !== b.photo_id) await env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(old.photo_id).run();
+    }
+    return json({ item: await env.DB.prepare("SELECT * FROM grocery WHERE id = ?").bind(mt[1]).first() });
+  }
+  if (mt && m === "DELETE") {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM photos WHERE id = (SELECT photo_id FROM grocery WHERE id = ?)").bind(mt[1]),
+      env.DB.prepare("DELETE FROM grocery WHERE id = ?").bind(mt[1])]);
     return json({ ok: true });
   }
-  if (mt && m === "DELETE") { await env.DB.prepare("DELETE FROM grocery WHERE id = ?").bind(mt[1]).run(); return json({ ok: true }); }
 
   // meal plan
   if (p === "/api/plan" && m === "GET") {

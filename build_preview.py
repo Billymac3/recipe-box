@@ -41,10 +41,20 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     grocery: [], plan: [],
     stores: ["Costco","Walmart","Aldi","Kroger","Meijer","Target","Sam's Club"]
   };
-  [["Eggs (5 dozen)","Costco"],["Rotisserie chicken","Costco"],["Paper towels","Costco"],["Bananas","Aldi"],["Milk","Aldi"],["Shredded cheese","Aldi"],["Kids' shampoo","Target"],["Birthday card","Target"],["Lemons",null],["Fresh basil",null]]
-    .forEach(([t, st], i) => db.grocery.push({ id: uid(), text: t, recipe_id: null, checked: 0, store: st, added_by: i % 3 === 1 ? "u1" : "u2", created: now - (10 - i) * 5.3e6 }));
+  [["Eggs (5 dozen)","Costco"],["Rotisserie chicken","Costco"],["Paper towels","Costco"],["Bananas","Aldi"],["Milk","Aldi"],["Shredded cheese","Aldi"],["Kids' shampoo","Target",null,"sample1"],["Birthday card","Target"],["Lemons",null],["Fresh basil",null],["Olive oil spray",null,"https://www.example.com/olive-oil-spray"]]
+    .forEach(([t, st, link, ph], i) => db.grocery.push({ id: uid(), text: t, recipe_id: null, checked: 0, store: st, link: link || null, photo_id: ph || null, added_by: i % 3 === 1 ? "u1" : "u2", created: now - (11 - i) * 5.3e6 }));
   const key = t => String(t||"").toLowerCase().split(",")[0].replace(/\(.*?\)/g," ").replace(/^[\s\d¼½¾.\/-]+/,"").replace(/[^a-z0-9' ]+/g," ").replace(/\s+/g," ").trim().replace(/(es|s)$/,"");
   const people = [{ id: "u1", name: "Billy" }, { id: "u2", name: "Your wife" }];
+  window.PREVIEW_PHOTOS = {};
+  // a drawn stand-in photo for the example "Kids' shampoo" item
+  function samplePhoto(){
+    const c = document.createElement("canvas"); c.width = 600; c.height = 450; const x = c.getContext("2d");
+    const g = x.createLinearGradient(0, 0, 600, 450); g.addColorStop(0, "#bfe3ff"); g.addColorStop(1, "#ffd6e8"); x.fillStyle = g; x.fillRect(0, 0, 600, 450);
+    x.fillStyle = "#ffffff"; x.beginPath(); x.roundRect(230, 90, 140, 280, 30); x.fill(); x.fillStyle = "#4a8fe0"; x.beginPath(); x.roundRect(255, 50, 90, 50, 12); x.fill();
+    x.fillStyle = "#4a8fe0"; x.font = "bold 30px sans-serif"; x.textAlign = "center"; x.fillText("KIDS", 300, 220); x.font = "20px sans-serif"; x.fillText("shampoo", 300, 252);
+    x.fillStyle = "rgba(0,0,0,.45)"; x.font = "16px sans-serif"; x.fillText("Example photo", 300, 430);
+    window.PREVIEW_PHOTOS.sample1 = c.toDataURL("image/jpeg", .85);
+  }
   const ok = (data) => new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } });
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const realFetch = window.fetch.bind(window);
@@ -54,6 +64,7 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     const u = new URL(url, "https://preview.local"), p = u.pathname, m = (init && init.method) || "GET";
     let body = {}; try { if (init && typeof init.body === "string") body = JSON.parse(init.body); } catch {}
     await wait(120);
+    if (p === "/api/me") { if (!db._pics) { db._pics = 1; samplePhoto(); } }
     if (p === "/api/me") return ok({ user: ME, people, ai: true, version: "2.0", deployed: { "2.0": Date.now() - 3600e3 } });
     if (p === "/api/invites" && m === "POST") return ok({ url: "https://recipe-box.example.workers.dev/?invite=k3x9q2mfp8tw4zra", expires: Date.now() + 7 * 864e5 });
     if (p === "/api/invites" && m === "GET") return ok({ open: 0 });
@@ -66,14 +77,14 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     if (mt && m === "PUT") { const r = db.recipes.find(x => x.id === mt[1]); Object.assign(r, body, { favorite: body.favorite === undefined ? r.favorite : (body.favorite ? 1 : 0) }); return ok({ recipe: r }); }
     if (mt && m === "DELETE") { db.recipes = db.recipes.filter(x => x.id !== mt[1]); return ok({ ok: true }); }
     if (p.startsWith("/api/import/")) { await wait(1200); return ok({ recipe: { title: "Example Imported Recipe", category: "Mains", prep_min: 10, cook_min: 20, servings: "4", ingredients: "1 lb pasta\n2 cups marinara sauce\n½ cup parmesan", steps: "Boil the pasta for 10 minutes.\nWarm the sauce and toss with the pasta.\nTop with parmesan.", notes: "In this preview every import returns this example.", tags: "", source_url: "", source_name: "preview" } }); }
-    if (p === "/api/photos") return ok({ id: "" });
+    if (p === "/api/photos") { const id = "p" + uid(); window.PREVIEW_PHOTOS[id] = "data:image/jpeg;base64," + body.data; return ok({ id }); }
     if (p === "/api/grocery" && m === "GET") return ok({ items: [...db.grocery].sort((a,b) => a.checked - b.checked || a.created - b.created), stores: db.stores });
     if (p === "/api/grocery" && m === "POST") { (body.items || []).forEach((t, i) => { db.grocery.push({ id: uid(), text: t, recipe_id: body.recipe_id || null, checked: 0, store: body.store || null, added_by: "u1", created: Date.now() + i }); }); return ok({ added: (body.items || []).length }); }
     if (p === "/api/grocery/bulk") { const ids = new Set(body.ids || []); if (body.remove) db.grocery = db.grocery.filter(g => !ids.has(g.id)); else db.grocery.forEach(g => { if (ids.has(g.id)) g.store = body.store || null; }); return ok({ changed: ids.size }); }
     if (p === "/api/stores") { db.stores = [...new Set((body.stores || []).map(x => String(x).trim()).filter(Boolean))]; return ok({ stores: db.stores }); }
     if (p === "/api/grocery/clear") { db.grocery = body.all ? [] : db.grocery.filter(g => !g.checked); return ok({ ok: true }); }
     mt = p.match(/^\/api\/grocery\/(\w+)$/);
-    if (mt && m === "PUT") { const g = db.grocery.find(x => x.id === mt[1]); if (g) { if ("checked" in body) g.checked = body.checked ? 1 : 0; if ("store" in body) g.store = body.store || null; } return ok({ ok: true }); }
+    if (mt && m === "PUT") { const g = db.grocery.find(x => x.id === mt[1]); if (g) { if ("checked" in body) g.checked = body.checked ? 1 : 0; if ("store" in body) g.store = body.store || null; if ("link" in body) { let l = String(body.link || "").trim(); if (l && !/^https?:\/\//i.test(l)) l = "https://" + l; g.link = l || null; } if ("photo_id" in body) g.photo_id = body.photo_id || null; return ok({ item: g }); } return ok({ ok: true }); }
     if (mt && m === "DELETE") { db.grocery = db.grocery.filter(x => x.id !== mt[1]); return ok({ ok: true }); }
     if (p === "/api/plan" && m === "GET") { const f = u.searchParams.get("from"), t = u.searchParams.get("to"); return ok({ entries: db.plan.filter(e => e.day >= f && e.day <= t) }); }
     if (p === "/api/plan" && m === "POST") { db.plan.push({ id: uid(), day: body.day, recipe_id: body.recipe_id, note: body.note || "", created: Date.now() }); return ok({ ok: true }); }

@@ -269,7 +269,7 @@ ol.howto{padding-left:1.3em;margin:8px 0;display:grid;gap:6px}
 .glist.swipe{touch-action:pan-y}
 .glist li{position:relative}
 /* swipe: the store tag and × slide out, who/when slides in, the item name stays put */
-.glist.swipe li > .stag,.glist.swipe li > .x{transform:translateX(calc(var(--sx,0px) * -1.2));opacity:calc(1 - var(--so,0))}
+.glist.swipe li > .stag,.glist.swipe li > .x,.glist.swipe li > .gimg{transform:translateX(calc(var(--sx,0px) * -1.2));opacity:calc(1 - var(--so,0))}
 @media (prefers-reduced-motion:no-preference){#app:not(.swiping) .glist.swipe li > *{transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .28s}}
 .who{position:absolute;right:14px;top:0;bottom:0;width:110px;transform:translateX(calc(30px + var(--sx,0px) * .25));display:grid;align-content:center;justify-items:end;text-align:right;font-size:.75rem;line-height:1.25;color:var(--muted);pointer-events:none;opacity:0}
 .who b{color:var(--ink);font-size:.8rem;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -299,6 +299,28 @@ ol.howto{padding-left:1.3em;margin:8px 0;display:grid;gap:6px}
 
 .invite{display:grid;gap:8px;padding:12px 14px;border:1.5px solid var(--line);border-radius:var(--radius-sm)}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent-ink);font-weight:800;text-decoration:underline}
+
+.glist li.rich > .txt{flex:1;min-width:0}
+.cbox{flex:none !important;display:flex}
+.glink{color:#1a6ed8;text-decoration:underline;text-underline-offset:2px;font-weight:600;overflow-wrap:anywhere}
+.glink .ic-link{width:15px;height:15px;vertical-align:-2px;margin-left:4px}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .glink{color:#6aa8ff}}
+:root[data-theme="dark"] .glink{color:#6aa8ff}
+.gname{border:0;background:none;padding:0;text-align:left;font-weight:600;color:var(--ink);text-decoration:underline dotted;text-underline-offset:3px;overflow-wrap:anywhere}
+.gimg{flex:none;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);color:var(--accent-ink);display:grid;place-items:center}
+.gimg svg{width:19px;height:19px}
+.glist li.done .glink,.glist li.done .gname{opacity:.6}
+.glist li.pickrow{display:grid;gap:14px}
+.pr-sec{display:grid;gap:6px}
+.pr-h{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--accent-ink)}
+.pr-chips{display:flex;flex-wrap:wrap;gap:6px}
+.pr-photo{display:flex;align-items:center;gap:12px}
+.pr-photo img{width:64px;height:64px;object-fit:cover;border-radius:10px}
+.lightbox{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.86);display:grid;place-items:center;padding:calc(env(safe-area-inset-top,0px) + 56px) 16px calc(env(safe-area-inset-bottom,0px) + 24px)}
+.lightbox figure{margin:0;display:grid;gap:10px;justify-items:center;max-width:100%;max-height:100%}
+.lightbox img{max-width:100%;max-height:calc(100vh - 160px);border-radius:14px;object-fit:contain}
+.lightbox figcaption{color:#fff;font-weight:700;text-align:center}
+.lb-x{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:max(12px,env(safe-area-inset-right,0px))}
 
 /* tab bar */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1.5px solid var(--line);
@@ -396,6 +418,12 @@ const app = document.getElementById("app"), fab = document.getElementById("fab")
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "2.1", items: [
+    "Grocery items without a store now go on the General List, shown first",
+    "Link a grocery item to the exact product: its name shows in blue with a link icon",
+    "Add a photo to a grocery item; tap the item to see the photo full screen",
+    "Tap an item's store tag to change its store, link or photo"
+  ] },
   { version: "2.0", items: [
     "New look: 6 color palettes and 4 font styles to choose from on the Me tab, each with light and dark modes",
     "Recipes show as a photo grid, and recipe pages have a big Start cooking button",
@@ -491,6 +519,7 @@ function toast(msg){ const t = document.getElementById("toast"); t.textContent =
 function mondayOf(d){ const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); const wd = (x.getDay() + 6) % 7; x.setDate(x.getDate() - wd); return x; }
 const ymd = d => d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const photoUrl = id => (window.PREVIEW_PHOTOS && window.PREVIEW_PHOTOS[id]) || "/photo/" + encodeURIComponent(id);
 const imgFor = r => r.photo_id ? "/photo/" + encodeURIComponent(r.photo_id) : (r.image_url || "");
 const personName = id => id === S.me?.id ? "you" : (S.people[id] || "");
 
@@ -678,6 +707,8 @@ const ICON = {
   cart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h2l2.2 10.5a2 2 0 0 0 2 1.5h7.6a2 2 0 0 0 2-1.5L20.5 8H6"/><circle cx="10" cy="20" r="1.2"/><circle cx="17" cy="20" r="1.2"/></svg>',
   cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  link: '<svg class="ic-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>',
+  img: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-9 9"/></svg>',
   timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>'
 };
 const cleanStep = l => l.replace(/^(step\s*)?\d+[.):]\s*/i, "");
@@ -725,7 +756,7 @@ function renderDetail(){
     ${isel ? `<div style="height:210px"></div>
     <div class="selbar" role="toolbar" aria-label="Selected ingredients">
       <div class="selbar-h"><b>${isel.size} selected · add to grocery list</b></div>
-      <div class="chips selchips">${["", ...S.stores].map(st => `<button class="chip" data-iadd="${esc(st)}" ${isel.size ? "" : "disabled"}>${st ? "→ " + esc(st) : "→ No store"}</button>`).join("")}</div>
+      <div class="chips selchips">${["", ...S.stores].map(st => `<button class="chip" data-iadd="${esc(st)}" ${isel.size ? "" : "disabled"}>→ ${esc(st || "General List")}</button>`).join("")}</div>
     </div>` : ""}
     <div class="byline">${who ? `Added by ${esc(who)}` : ""}${r.source_url ? `${who?" · ":""}From <a href="${esc(r.source_url)}" target="_blank" rel="noopener">${esc(r.source_name || "the original")}</a>` : (r.source_name ? ` · From ${esc(r.source_name)}` : "")}${r.tags ? ` · ${esc(r.tags)}` : ""}</div>`;
 }
@@ -1151,14 +1182,30 @@ function renderGrocery(){
   const open = S.grocery.filter(g => !g.checked), done = S.grocery.filter(g => g.checked && inView(g));
   const count = k => open.filter(g => keyOf(g) === k).length;
   const extra = [...new Set(open.map(keyOf).filter(k => k && !known.has(k)))];   // stores removed from the list but still on items
-  const order = [...stores, ...extra, ""];
-  const label = k => k || "No store";
+  const order = ["", ...stores, ...extra];
+  const label = k => k || "General List";
   const sel = S.gSel;
   const row = g => { const r = g.recipe_id && S.recipes.find(x => x.id === g.recipe_id);
-    if (sel) return `<li class="selrow ${sel.has(g.id) ? "on" : ""} ${g.checked ? "done" : ""}" data-gtoggle="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" tabindex="0"><span class="selbox" aria-hidden="true"></span><span class="txt">${esc(g.text)}${r ? `<span class="from">${esc(r.title)}</span>` : ""}</span><span class="stag ${g.store ? "" : "none"}">${esc(g.store || "No store")}</span></li>`;
-    const li = `<li class="${g.checked?"done":""}" data-lp="g:${esc(g.id)}"><span class="who" aria-hidden="true"><b>${esc(S.people[g.added_by] || "Someone")}</b>${esc(whenText(g.created))}</span><label><input class="check" type="checkbox" data-gcheck="${esc(g.id)}" ${g.checked?"checked":""}><span class="txt">${esc(g.text)}${r ? `<span class="from">${esc(r.title)}</span>` : ""}</span></label><button class="stag ${g.store ? "" : "none"}" data-gpick="${esc(g.id)}" aria-label="Choose store">${esc(g.store || "+ Store")}</button><button class="x" data-gdel="${esc(g.id)}" aria-label="Remove">×</button></li>`;
+    if (sel) return `<li class="selrow ${sel.has(g.id) ? "on" : ""} ${g.checked ? "done" : ""}" data-gtoggle="${esc(g.id)}" role="checkbox" aria-checked="${sel.has(g.id)}" tabindex="0"><span class="selbox" aria-hidden="true"></span><span class="txt">${esc(g.text)}${r ? `<span class="from">${esc(r.title)}</span>` : ""}</span><span class="stag ${g.store ? "" : "none"}">${esc(g.store || "General")}</span></li>`;
+    const from = r ? `<span class="from">${esc(r.title)}</span>` : "";
+    const check = `<input class="check" type="checkbox" data-gcheck="${esc(g.id)}" ${g.checked?"checked":""} aria-label="${esc(g.text)}">`;
+    // plain items: tapping the name ticks it. Linked items open the link; items with a photo show the photo.
+    const body = g.link
+      ? `<label class="cbox">${check}</label><span class="txt"><a class="glink" href="${esc(g.link)}" target="_blank" rel="noopener">${esc(g.text)}${ICON.link}</a>${from}</span>`
+      : g.photo_id
+        ? `<label class="cbox">${check}</label><span class="txt"><button class="gname" data-gimg="${esc(g.id)}">${esc(g.text)}</button>${from}</span>`
+        : `<label>${check}<span class="txt">${esc(g.text)}${from}</span></label>`;
+    const img = g.photo_id ? `<button class="gimg" data-gimg="${esc(g.id)}" aria-label="Show photo">${ICON.img}</button>` : "";
+    const li = `<li class="${g.checked?"done":""} ${g.link || g.photo_id ? "rich" : ""}" data-lp="g:${esc(g.id)}"><span class="who" aria-hidden="true"><b>${esc(S.people[g.added_by] || "Someone")}</b>${esc(whenText(g.created))}</span>${body}${img}<button class="stag ${g.store ? "" : "none"}" data-gpick="${esc(g.id)}" aria-label="Store, link and photo">${esc(g.store || "General")}</button><button class="x" data-gdel="${esc(g.id)}" aria-label="Remove">×</button></li>`;
     if (S.gPick !== g.id) return li;
-    return li + `<li class="pickrow"><span class="small muted">Buy at:</span>${[...stores, ""].map(st => `<button class="chip" data-gset="${esc(st)}" data-gid="${esc(g.id)}" aria-pressed="${keyOf(g) === st}">${esc(label(st))}</button>`).join("")}</li>`; };
+    return li + `<li class="pickrow"><div class="pr-sec"><span class="pr-h">Buy at</span><div class="pr-chips">${["", ...stores].map(st => `<button class="chip" data-gset="${esc(st)}" data-gid="${esc(g.id)}" aria-pressed="${keyOf(g) === st}">${esc(label(st))}</button>`).join("")}</div></div>
+      <div class="pr-sec"><label class="pr-h" for="gl-${esc(g.id)}">Link to the exact item</label>
+        <div class="urlrow"><input id="gl-${esc(g.id)}" class="inp" type="url" inputmode="url" autocapitalize="off" placeholder="Paste a product link" value="${esc(g.link || "")}"><button class="btn" data-glink="${esc(g.id)}">Save</button></div>
+        ${g.link ? `<button class="linkbtn" data-glinkrm="${esc(g.id)}">Remove link</button>` : ""}</div>
+      <div class="pr-sec"><span class="pr-h">Photo</span>
+        ${g.photo_id ? `<div class="pr-photo"><img src="${esc(photoUrl(g.photo_id))}" alt=""><button class="linkbtn" data-gphotorm="${esc(g.id)}">Remove photo</button></div>` : ""}
+        <label class="btn" style="justify-self:start">${S.gUploading === g.id ? `<span class="spinner"></span> Uploading…` : (g.photo_id ? "Replace photo" : "Add photo")}<input type="file" accept="image/*" data-gphoto="${esc(g.id)}" hidden></label></div>
+      <button class="btn primary" data-gpick="${esc(g.id)}" style="justify-self:start">Done</button></li>`; };
   const section = k => { const items = open.filter(g => keyOf(g) === k); if (!items.length) return "";
     const all = sel && items.every(g => sel.has(g.id));
     return `<div class="ghead"><span>${esc(label(k))}</span>${sel ? `<button class="selall" data-gselall="${esc(k)}">${all ? "Unselect all" : "Select all"}</button>` : `<span>${items.length}</span>`}</div><ul class="glist ${sel ? "" : "swipe"}">${items.map(row).join("")}</ul>`; };
@@ -1178,21 +1225,22 @@ function renderGrocery(){
     ${sel ? `<p class="small muted" style="margin:0 0 6px">Tap items to select them, then choose a store below.</p>` : (S.grocery.length ? `<p class="hint" style="margin:0 0 4px">Swipe left on the list to see who added each item.</p>` : "")}
     <div class="chips" role="toolbar" aria-label="Show store" style="padding-top:0">
       <button class="chip" data-gstore="All" aria-pressed="${S.gStore === "All"}">All · ${open.length}</button>
+      <button class="chip" data-gstore="" aria-pressed="${S.gStore === ""}">General List${count("") ? " · " + count("") : ""}</button>
       ${[...stores, ...extra].map(st => `<button class="chip" data-gstore="${esc(st)}" aria-pressed="${S.gStore === st}">${esc(st)}${count(st) ? " · " + count(st) : ""}</button>`).join("")}
-      ${count("") ? `<button class="chip" data-gstore="" aria-pressed="${S.gStore === ""}">No store · ${count("")}</button>` : ""}
+
     </div>
     <form class="g-add" id="gform" style="margin-top:10px" ${sel ? "hidden" : ""}>
       <input id="g-new" class="inp" placeholder="Add an item" autocomplete="off">
-      <select id="g-store" class="inp gsel" aria-label="Store for new item"><option value="">No store</option>${stores.map(st => `<option ${addStore === st ? "selected" : ""}>${esc(st)}</option>`).join("")}</select>
+      <select id="g-store" class="inp gsel" aria-label="Store for new item"><option value="">General List</option>${stores.map(st => `<option ${addStore === st ? "selected" : ""}>${esc(st)}</option>`).join("")}</select>
       <button class="btn primary">Add</button>
     </form>
-    ${!S.grocery.length ? `<div class="empty"><h2>Nothing on the list</h2><p>Add items here, or tap Groceries on any recipe to add its ingredients. Press and hold an item (or tap Select) to file several items under a store at once.</p></div>` : ""}
+    ${!S.grocery.length ? `<div class="empty"><h2>Nothing on the list</h2><p>Add items here, or tap Groceries on any recipe to add its ingredients. Tap an item's store tag to change its store or add a link or photo. Press and hold to select several at once.</p></div>` : ""}
     ${openView || (S.grocery.length ? `<div class="empty"><p style="margin:0">${S.gStore === "All" ? "All done." : "Nothing left for " + esc(label(S.gStore)) + "."}</p></div>` : "")}
     ${done.length ? `<div class="ghead"><span>In the cart</span><span>${done.length}</span></div><ul class="glist ${sel ? "" : "swipe"}">${done.map(row).join("")}</ul>` : ""}
     ${sel ? `<div style="height:210px"></div>
     <div class="selbar" role="toolbar" aria-label="Selected items">
       <div class="selbar-h"><b>${sel.size} selected</b>${sel.size ? `<button class="btn ghost danger-t" data-act="gselrm">${S.gRmConfirm ? "Tap again to remove " + sel.size : "Remove"}</button>` : ""}</div>
-      <div class="chips selchips">${[...stores, ""].map(st => `<button class="chip" data-gmove="${esc(st)}" ${sel.size ? "" : "disabled"}>${st ? "→ " + esc(st) : "No store"}</button>`).join("")}</div>
+      <div class="chips selchips">${["", ...stores].map(st => `<button class="chip" data-gmove="${esc(st)}" ${sel.size ? "" : "disabled"}>→ ${esc(st || "General List")}</button>`).join("")}</div>
     </div>` : ""}
     <div class="btn-row" style="margin-top:14px" ${sel ? "hidden" : ""}>
       ${S.grocery.some(g => g.checked) ? `<button class="btn" data-act="gclear">Clear checked items</button>` : ""}
@@ -1334,6 +1382,29 @@ function openRecipe(id){ S.iSel = null; S.tab = "recipes"; S.id = id; S.view = "
 function openNew(){ S.tab = "recipes"; S.id = null; S.draft = null; S.view = "import"; render(); window.scrollTo(0,0); }
 fab.addEventListener("click", openNew);
 
+/* ---------- grocery photos ---------- */
+app.addEventListener("change", async e => {
+  const inp = e.target.closest("input[data-gphoto]"); if (!inp || !inp.files[0]) return;
+  const id = inp.dataset.gphoto; S.gUploading = id; renderGrocery();
+  try {
+    const blob = await shrink(inp.files[0], 1200, 0.8);
+    const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
+    const { id: pid } = await api("/api/photos", { method: "POST", body: { data: b64, mime: "image/jpeg" } });
+    const out = await api("/api/grocery/" + id, { method: "PUT", body: { photo_id: pid } });
+    Object.assign(S.grocery.find(x => x.id === id), out.item); toast("Photo added");
+  } catch (err) { toast(err.message || "Couldn't add that photo."); }
+  S.gUploading = null; renderGrocery();
+});
+const photoEl = document.createElement("div");
+photoEl.className = "lightbox"; photoEl.hidden = true; photoEl.setAttribute("role", "dialog"); photoEl.setAttribute("aria-modal", "true");
+document.body.appendChild(photoEl);
+function openPhoto(src, caption){
+  photoEl.innerHTML = `<button class="lb-x iconbtn" aria-label="Close photo">${ICON.close}</button><figure><img src="${esc(src)}" alt="${esc(caption)}"><figcaption>${esc(caption)}</figcaption></figure>`;
+  photoEl.hidden = false; photoEl.querySelector(".lb-x").focus({ preventScroll: true });
+}
+photoEl.addEventListener("click", e => { if (!e.target.closest("img") || e.target.closest(".lb-x")) { photoEl.hidden = true; photoEl.innerHTML = ""; } });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !photoEl.hidden) { photoEl.hidden = true; photoEl.innerHTML = ""; } });
+
 /* ---------- press and hold ---------- */
 const sheetEl = document.createElement("div");
 sheetEl.className = "sheet-wrap"; sheetEl.hidden = true;
@@ -1419,7 +1490,7 @@ function longPress(key){
 })();
 
 app.addEventListener("click", async e => {
-  const t = e.target.closest("[data-act],[data-open],[data-fav],[data-cat],[data-favonly],[data-auth],[data-addday],[data-unplan],[data-gcheck],[data-gdel],[data-look],[data-mode],[data-font],[data-gpick],[data-gset],[data-gstore],[data-sup],[data-sdel],[data-gtoggle],[data-gselall],[data-gmove],[data-itoggle],[data-iadd],[data-resetfor],[data-acc]");
+  const t = e.target.closest("[data-act],[data-open],[data-fav],[data-cat],[data-favonly],[data-auth],[data-addday],[data-unplan],[data-gcheck],[data-gdel],[data-look],[data-mode],[data-font],[data-gpick],[data-gset],[data-gstore],[data-sup],[data-sdel],[data-gtoggle],[data-gselall],[data-gmove],[data-itoggle],[data-iadd],[data-resetfor],[data-acc],[data-gimg],[data-glink],[data-glinkrm],[data-gphotorm]");
   if (!t) return;
   const d = t.dataset;
   try {
@@ -1449,8 +1520,15 @@ app.addEventListener("click", async e => {
       S.grocery.forEach(g => { if (S.gSel.has(g.id)) g.store = d.gmove || null; });
       S.gSel = new Set(); S.gRmConfirm = false; renderGrocery();
       await api("/api/grocery/bulk", { method: "POST", body: { ids, store: d.gmove } });
-      return toast(`Moved ${ids.length} ${ids.length === 1 ? "item" : "items"} to ${d.gmove || "No store"}`);
+      return toast(`Moved ${ids.length} ${ids.length === 1 ? "item" : "items"} to ${d.gmove || "the General List"}`);
     }
+    if (d.gimg) { const g = S.grocery.find(x => x.id === d.gimg); if (g && g.photo_id) openPhoto(photoUrl(g.photo_id), g.text); return; }
+    if (d.glink || d.glinkrm) {
+      const id = d.glink || d.glinkrm; const link = d.glink ? document.getElementById("gl-" + id).value.trim() : "";
+      const out = await api("/api/grocery/" + id, { method: "PUT", body: { link } });
+      Object.assign(S.grocery.find(x => x.id === id), out.item); renderGrocery(); toast(link ? "Link saved" : "Link removed"); return;
+    }
+    if (d.gphotorm) { const out = await api("/api/grocery/" + d.gphotorm, { method: "PUT", body: { photo_id: null } }); Object.assign(S.grocery.find(x => x.id === d.gphotorm), out.item); renderGrocery(); return; }
     if (d.gpick) { S.gPick = S.gPick === d.gpick ? null : d.gpick; return renderGrocery(); }
     if (d.gset !== undefined) { const g = S.grocery.find(x => x.id === d.gid); g.store = d.gset || null; S.gPick = null; renderGrocery(); await api("/api/grocery/" + g.id, { method: "PUT", body: { store: d.gset } }); return; }
     if (d.gstore !== undefined) { S.gStore = d.gstore; S.gPick = null; return renderGrocery(); }
