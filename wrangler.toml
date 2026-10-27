@@ -14,6 +14,15 @@ binding = "AI"
 # INVITE_CODE is a Cloudflare secret (Worker → Settings → Variables and Secrets).
 # It is never stored here, and deploys leave it alone.
 
-# Every minute: sends lock-screen timer alerts that are due.
+# Lock-screen timer alerts: one alarm clock that wakes only when a timer is due.
+[[durable_objects.bindings]]
+name = "TIMERS"
+class_name = "TimerClock"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TimerClock"]
+
+# No scheduled wake-ups (this removes the old every-minute check).
 [triggers]
-crons = ["* * * * *"]
+crons = []

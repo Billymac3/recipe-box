@@ -530,17 +530,17 @@ function usageHtml(){
   const bar = (label, val, max, pct, note) => `<div class="ubar ${pct >= .9 ? "bad" : pct >= .7 ? "warn" : ""}"><div class="ubar-h"><b>${label}</b><span>${note}</span></div><div class="ubar-t"><i style="width:${Math.min(100, Math.max(1.5, pct * 100)).toFixed(1)}%"></i></div></div>`;
   const days = (S.usageWeek && S.usageWeek.days) || [];
   const byDay = {}; days.forEach(r => { (byDay[r.day] ||= {})[r.key] = r.n; });
-  const hist = Object.keys(byDay).sort().slice(-7).map(d => `<li><span>${new Date(d + "T12:00Z").toLocaleDateString(undefined, { weekday: "short" })}</span><span>${Math.round(byDay[d].requests || 0).toLocaleString()} visits</span><span>${Math.round(byDay[d].ai_calls || 0)} AI ${Math.round(byDay[d].ai_calls || 0) === 1 ? "read" : "reads"}</span></li>`).join("");
-  return `<p class="small muted" style="margin:0">Today so far. The visit and AI limits reset every day at ${new Date(Date.UTC(2026, 0, 1)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} your time.</p>
-    ${bar("App visits", u.requests, 100000, u.pct.requests, `${u.requests.toLocaleString()} of 100,000`)}
+  const hist = Object.keys(byDay).sort().slice(-7).map(d => `<li><span>${new Date(d + "T12:00Z").toLocaleDateString(undefined, { weekday: "short" })}</span><span>${Math.round(byDay[d].requests || 0).toLocaleString()} requests</span><span>${Math.round(byDay[d].ai_calls || 0)} AI ${Math.round(byDay[d].ai_calls || 0) === 1 ? "read" : "reads"}</span></li>`).join("");
+  return `<p class="small muted" style="margin:0">Today so far. The request and AI limits reset every day at ${new Date(Date.UTC(2026, 0, 1)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} your time.</p>
+    ${bar("Server requests", u.requests, 100000, u.pct.requests, `${u.requests.toLocaleString()} of 100,000`)}
     ${bar("AI recipe reading", u.neurons, 10000, u.pct.neurons, `${Math.round(u.pct.neurons * 100)}% · ${u.imports} ${u.imports === 1 ? "read" : "reads"}`)}
     ${bar("Storage", u.dbsize, 5e9, u.pct.dbsize, `${fmtN(u.dbsize)} of 5 GB`)}
     ${hist ? `<div class="cook-h">Last 7 days</div><ul class="uhist">${hist}</ul>` : ""}
-    <p class="hint" style="margin:0">Counts are close estimates kept by the app itself. Over a limit, that feature pauses until the reset; nothing is ever charged. You'll see a warning on the Recipes screen at 70%.</p>`;
+    <p class="hint" style="margin:0">Every screen you open, photo you load and timer alert sent is a request. Counts are close estimates kept by the app itself. Over a limit, that feature pauses until the reset; nothing is ever charged. You'll see a warning on the Recipes screen at 70%.</p>`;
 }
 function usageBanner(){
   const u = S.usage; if (!S.me || !S.me.is_admin || !u) return "";
-  const hot = [["app visits", u.pct.requests], ["AI recipe reading", u.pct.neurons], ["storage", u.pct.dbsize]].filter(([, p]) => p >= .7);
+  const hot = [["server requests", u.pct.requests], ["AI recipe reading", u.pct.neurons], ["storage", u.pct.dbsize]].filter(([, p]) => p >= .7);
   if (!hot.length) return "";
   return `<div class="news warnbox" role="status"><div><b>Getting close to a free limit</b><span>${hot.map(([k, p]) => `${k}: ${Math.round(p * 100)}%`).join(" · ")}</span></div><button class="btn" data-act="usagego">See usage</button></div>`;
 }
@@ -548,6 +548,10 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.2", items: [
+    "Lighter on the free plan: the server no longer checks for timer alerts every minute. It wakes only when a cooking timer is running, so a quiet day uses almost nothing",
+    "The usage meter now says \"Server requests\" instead of \"App visits\", which is what it really counts"
+  ] },
   { version: "3.1", items: [
     "Elements stand out more: cards, lists, chips and buttons lift off a lightly tinted page with soft shadows",
     "Meal plan: each meal is its own colored tile with a picture and cook time, typed notes look different, empty days say \"Nothing planned\", and today is clearly marked",

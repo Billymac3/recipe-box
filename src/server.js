@@ -2,7 +2,9 @@
 // Runs as one Cloudflare Worker with a D1 database (binding: DB) and
 // Workers AI (binding: AI). Each household's data is kept separate.
 // Secrets: INVITE_CODE (joins the first household), optional ADSENSE_CLIENT /
-// ADSENSE_SLOT (turn on the banner ad). A cron trigger sends timer alerts.
+// ADSENSE_SLOT (turn on the banner ad). A Durable Object alarm (binding: TIMERS)
+// wakes only when a cooking timer is due, so idle days cost nothing.
+import { DurableObject } from "cloudflare:workers";
 
 const APP_HTML = __APP_HTML__;
 const SW_JS = __SW_JS__;
@@ -11,7 +13,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "3.1";
+const APP_VERSION = "3.2";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -768,6 +770,7 @@ async function api(req, env, url) {
     const id = uid();
     await env.DB.prepare("INSERT INTO push_timers (id, user_id, fire_at, title, body) VALUES (?,?,?,?,?)")
       .bind(id, user.id, fireAt, String(b.title || "Timer done").slice(0, 80), String(b.body || "").slice(0, 160)).run();
+    if (env.TIMERS) await env.TIMERS.get(env.TIMERS.idFromName("clock")).arm();
     return json({ id });
   }
   mt = p.match(/^\/api\/push\/timer\/([\w-]+)$/);
@@ -960,15 +963,31 @@ async function sendPushToUser(env, userId, data) {
   return sent.filter(Boolean).length;
 }
 // runs every minute: sends each timer due in the next minute at its exact second
+// sends every timer alert that is due now, then clears old leftovers
 async function fireTimers(env) {
-  const due = (await env.DB.prepare("SELECT * FROM push_timers WHERE fire_at <= ? ORDER BY fire_at").bind(Date.now() + 61e3).all()).results;
+  const due = (await env.DB.prepare("SELECT * FROM push_timers WHERE fire_at <= ? ORDER BY fire_at").bind(Date.now() + 1500).all()).results;
   await Promise.all(due.map(async t => {
-    const wait = t.fire_at - Date.now();
-    if (wait > 0) await new Promise(r => setTimeout(r, wait));
     const still = await env.DB.prepare("DELETE FROM push_timers WHERE id = ? RETURNING id").bind(t.id).first();   // cancelled meanwhile?
     if (still) await sendPushToUser(env, t.user_id, { title: t.title, body: t.body, tag: "timer-" + t.id });
   }));
   await env.DB.prepare("DELETE FROM push_timers WHERE fire_at < ?").bind(Date.now() - 3600e3).run();
+}
+
+// One alarm clock for the whole app. It is set for the next timer that's due
+// and sleeps (costing nothing) whenever no timers are running.
+export class TimerClock extends DurableObject {
+  async arm() {
+    const r = await this.env.DB.prepare("SELECT MIN(fire_at) AS t FROM push_timers").first();
+    if (!r || !r.t) return;
+    const cur = await this.ctx.storage.getAlarm();
+    if (!cur || cur > r.t) await this.ctx.storage.setAlarm(Math.max(r.t, Date.now() + 50));
+  }
+  async alarm() {
+    bump("requests");
+    try { await ensureSchema(this.env); await fireTimers(this.env); } catch {}
+    await this.arm();
+    await flushUsage(this.env);
+  }
 }
 
 function pngResponse(b64data) {
@@ -977,11 +996,6 @@ function pngResponse(b64data) {
 }
 
 export default {
-  async scheduled(event, env, ctx) {
-    bump("requests");
-    try { await ensureSchema(env); await fireTimers(env); } catch {}
-    await flushUsage(env);
-  },
   async fetch(req, env, ctx) {
     bump("requests");
     if (ctx && env.DB) ctx.waitUntil(flushUsage(env));
