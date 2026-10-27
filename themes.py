@@ -1,5 +1,6 @@
 """Generates the color palettes and font styles for the app (light + dark for every palette)."""
-KEYS = ["bg","card","ink","muted","line","accent","accent-soft","on-accent","accent-ink","pop","pop-soft","danger"]
+BASE_KEYS = ["bg","card","ink","muted","line","accent","accent-soft","on-accent","accent-ink","pop","pop-soft","danger"]
+KEYS = BASE_KEYS + ["edge", "pop-ink"]
 LIGHT_SHADOW = "0 1px 2px rgba(0,0,0,.05), 0 6px 18px rgba(0,0,0,.06)"
 PALETTES = {
  # id: (name, light, dark)
@@ -33,7 +34,43 @@ GOOGLE = ("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wgh
           "&family=Figtree:wght@400;500;600;700;800&family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800"
           "&family=Gloock&family=Instrument+Sans:wght@400;500;600;700&family=Lexend:wght@400;500;600;700;800&display=swap")
 
+# ---------- contrast tuning ----------
+# Every palette is nudged until it meets these contrast ratios (WCAG), keeping its own hues:
+#   text: ink 12:1, muted 6:1, accent-ink 6:1 (5:1 on tinted panels), danger 5:1
+#   button text on accent 4.5:1, control outlines (--edge) 3:1, dividers (--line) 1.8:1, stars (--pop-ink) 3:1
+def _rgb(h): h = h.lstrip("#"); return [int(h[i:i+2], 16) for i in (0, 2, 4)]
+def _hex(c): return "#" + "".join(f"{max(0, min(255, round(v))):02x}" for v in c)
+def _lum(h):
+    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = [v / 255 for v in _rgb(h)]
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+def contrast(a, b):
+    la, lb = _lum(a), _lum(b); return (max(la, lb) + .05) / (min(la, lb) + .05)
+def _mix(a, b, t): ca, cb = _rgb(a), _rgb(b); return _hex([x + (y - x) * t for x, y in zip(ca, cb)])
+def _push(color, toward, against, need):
+    """Move color step by step toward `toward` until it reaches `need` contrast with every color in `against`."""
+    for i in range(0, 101):
+        c = _mix(color, toward, i / 100)
+        if all(contrast(c, a) >= need for a in against): return c
+    return _mix(color, toward, 1)
+def tune(vals, dark):
+    t = dict(zip(BASE_KEYS, vals))
+    far = "#ffffff" if dark else "#000000"
+    surfaces = [t["bg"], t["card"]]
+    t["ink"] = _push(t["ink"], far, surfaces, 12)
+    t["muted"] = _push(t["muted"], t["ink"], surfaces + [t["accent-soft"]], 6)
+    t["accent-ink"] = _push(t["accent-ink"], far, surfaces, 6)
+    t["accent-ink"] = _push(t["accent-ink"], far, [t["accent-soft"]], 5)
+    t["danger"] = _push(t["danger"], far, surfaces, 5)
+    # button fill: darken (light) or lighten (dark) the accent until its label reads clearly
+    t["accent"] = _push(t["accent"], "#000000" if _lum(t["on-accent"]) > .5 else "#ffffff", [t["on-accent"]], 4.5)   # move away from the label color
+    t["line"] = _push(t["bg"], t["muted"], surfaces, 1.8)
+    t["edge"] = _push(t["bg"], t["muted"], surfaces, 3.0)
+    t["pop-ink"] = _push(t["pop"], far, [t["card"]], 3.0)
+    return [t[k] for k in KEYS]
+
 def toks(vals, dark):
+    vals = tune(vals, dark)
     t = "; ".join(f"--{k}:{v}" for k, v in zip(KEYS, vals))
     return t + ("; --shadow:none; color-scheme:dark" if dark else f"; --shadow:{LIGHT_SHADOW}; color-scheme:light")
 
