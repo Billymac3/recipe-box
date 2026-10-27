@@ -7,7 +7,7 @@ A shared family recipe app.
 
 Each household (a family or group of friends) has its own private recipes and lists.
 
-It runs free on Cloudflare: Workers, D1, Workers AI and Durable Objects.
+It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with optional Google Gemini for recipe reading.
 
 **Patch notes:** see [CHANGELOG.md](CHANGELOG.md) for every release, what changed and why.
 
@@ -29,6 +29,7 @@ It runs free on Cloudflare: Workers, D1, Workers AI and Durable Objects.
 - **Secrets** (Worker → Settings → Variables and Secrets, never stored here):
   - `INVITE_CODE` lets someone join the first household.
   - `ADSENSE_CLIENT` and `ADSENSE_SLOT` are optional. They turn on the banner ad.
+  - `GEMINI_API_KEY` is optional. It's a free key from Google AI Studio that makes Gemini read recipes first, with Cloudflare's AI as the backup. `GEMINI_MODELS` (a comma-separated list) can override which Gemini models are tried, in order.
 - **No cron triggers.** Timer alerts use a Durable Object alarm that wakes only when a timer is due.
 - **The database updates itself.** Schema changes run on the first request after a deploy. They only add tables and columns and never delete data.
 

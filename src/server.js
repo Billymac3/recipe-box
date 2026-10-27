@@ -2,8 +2,9 @@
 // Runs as one Cloudflare Worker with a D1 database (binding: DB) and
 // Workers AI (binding: AI). Each household's data is kept separate.
 // Secrets: INVITE_CODE (joins the first household), optional ADSENSE_CLIENT /
-// ADSENSE_SLOT (turn on the banner ad). A Durable Object alarm (binding: TIMERS)
-// wakes only when a cooking timer is due, so idle days cost nothing.
+// ADSENSE_SLOT (turn on the banner ad), optional GEMINI_API_KEY (Google's free AI,
+// tried before Workers AI) and GEMINI_MODELS (comma list to override the model order).
+// A Durable Object alarm (binding: TIMERS) wakes only when a cooking timer is due.
 import { DurableObject } from "cloudflare:workers";
 
 const APP_HTML = __APP_HTML__;
@@ -13,7 +14,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "3.2";
+const APP_VERSION = "3.3";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -281,6 +282,8 @@ function normalizeAi(o, url, image) {
   };
 }
 async function aiFromText(env, text, url, image) {
+  const g = await gemini(env, AI_PROMPT, [{ text: text.slice(0, 24000) }], true);
+  if (g !== null) return normalizeAi(parseAiJson(g), url, image);
   if (!env.AI) throw new Error("ai_missing");
   const out = await runAI(env, TEXT_MODEL, {
     messages: [{ role: "system", content: AI_PROMPT }, { role: "user", content: text.slice(0, 24000) }],
@@ -289,6 +292,8 @@ async function aiFromText(env, text, url, image) {
   return normalizeAi(parseAiJson(out && out.response), url, image);
 }
 async function aiFromImage(env, bytes) {
+  const g = await gemini(env, AI_PROMPT, [{ text: "Here is a screenshot or photo of a recipe. Extract it." }, imagePart(bytes)], true);
+  if (g !== null) return normalizeAi(parseAiJson(g), "", "");
   if (!env.AI) throw new Error("ai_missing");
   const run = () => runAI(env, VISION_MODEL, {
     messages: [{ role: "system", content: AI_PROMPT }, { role: "user", content: "Here is a screenshot or photo of a recipe. Extract it." }],
@@ -423,7 +428,7 @@ async function api(req, env, url) {
       writes.push(env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").bind("stores:" + hh, JSON.stringify(DEFAULT_STORES)));
       writes.push(env.DB.prepare("UPDATE starter_codes SET used_by = ? WHERE token_hash = ?").bind(id, starterHash));
     }
-    writes.push(env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created,household_id,is_admin) VALUES (?,?,?,?,?,?,?,?,0)").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), now, hh));
+    writes.push(env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created,household_id,is_admin) VALUES (?,?,?,?,?,?,?,?,(SELECT CASE WHEN EXISTS (SELECT 1 FROM users) THEN 0 ELSE 1 END))").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), now, hh));
     if (inviteHash) writes.push(env.DB.prepare("UPDATE invites SET used_by = ? WHERE token_hash = ?").bind(id, inviteHash));
     await env.DB.batch(writes);
     return startSession(env, id);
@@ -485,7 +490,7 @@ async function api(req, env, url) {
       deployed: Object.fromEntries(dep.results.map(r => [r.key.slice(9), +r.value])),
       ads: env.ADSENSE_CLIENT && env.ADSENSE_SLOT ? { client: env.ADSENSE_CLIENT, slot: env.ADSENSE_SLOT } : null,
       vapid: await vapidPublic(env) };
-    if (user.is_admin) out.usage = await usageToday(env);
+    if (user.is_admin) { out.usage = await usageToday(env); out.usage.geminiStatus = await geminiStatus(env); }
     return json(out);
   }
   if (p === "/api/household" && m === "PUT") {
@@ -557,7 +562,14 @@ async function api(req, env, url) {
     }
     if (p === "/api/admin/usage" && m === "GET") {
       const days = (await env.DB.prepare("SELECT day, key, n FROM usage WHERE day >= ? ORDER BY day").bind(utcDay(-6)).all()).results;
-      return json({ today: await usageToday(env), days, limits: LIMITS });
+      const today = await usageToday(env); today.geminiStatus = await geminiStatus(env);
+      return json({ today, days, limits: LIMITS });
+    }
+    // owner's "Check Gemini" button: one tiny request to confirm the key works
+    if (p === "/api/admin/gemini-test" && m === "POST") {
+      if (!env.GEMINI_API_KEY) return json({ ok: false, status: { state: "off" } });
+      const out = await gemini(env, "", [{ text: "Reply with the single word: ready" }], false);
+      return json({ ok: out !== null, status: await geminiStatus(env) });
     }
     return err("Not found", 404);
   }
@@ -825,7 +837,7 @@ async function usageToday(env) {
   for (const [k, n] of Object.entries(usageBuf)) t[k] = (t[k] || 0) + n;   // include what hasn't been written yet
   if (!t.dbsize) { const last = await env.DB.prepare("SELECT n FROM usage WHERE key = 'dbsize' ORDER BY day DESC LIMIT 1").first(); if (last) t.dbsize = last.n; }
   return {
-    requests: Math.round(t.requests || 0), neurons: Math.round(t.neurons || 0), imports: Math.round(t.ai_calls || 0), dbsize: Math.round(t.dbsize || 0),
+    requests: Math.round(t.requests || 0), neurons: Math.round(t.neurons || 0), imports: Math.round(t.ai_calls || 0), gemini: Math.round(t.gemini_calls || 0), dbsize: Math.round(t.dbsize || 0),
     pct: { requests: (t.requests || 0) / LIMITS.requests, neurons: (t.neurons || 0) / LIMITS.neurons, dbsize: (t.dbsize || 0) / LIMITS.dbsize }
   };
 }
@@ -844,8 +856,79 @@ async function runAI(env, model, input, promptChars) {
   return out;
 }
 
+/* ---------------- Gemini (Google) ----------------
+   Tried first for every AI job when the GEMINI_API_KEY secret is set. Each model has its own
+   free daily allowance, so the app works down the list, then falls back to Cloudflare's AI,
+   then to the no-AI sorter. Returns the reply text, or null if Gemini couldn't do it. */
+const GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-flash-latest"];
+const geminiModels = env => { const v = String(env.GEMINI_MODELS || "").split(",").map(x => x.trim()).filter(Boolean); return v.length ? v : GEMINI_MODELS; };
+// Google's free limits reset at midnight Pacific time
+function nextPacificMidnight() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour12: false, hour: "numeric", minute: "numeric", second: "numeric" })
+    .formatToParts(new Date()).map(x => [x.type, +x.value || 0]));
+  const h = parts.hour % 24;
+  return Date.now() + ((24 - h) * 3600 - parts.minute * 60 - parts.second) * 1000;
+}
+async function geminiNote(env, state, model, msg) {
+  try { await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('gemini:status', ?)").bind(JSON.stringify({ state, model, msg: String(msg || "").slice(0, 200), at: Date.now() })).run(); } catch {}
+}
+function imagePart(bytes) {
+  const b = bytes, head = String.fromCharCode(...b.slice(4, 12));
+  const mime = b[0] === 0x89 && b[1] === 0x50 ? "image/png" : b[0] === 0xff && b[1] === 0xd8 ? "image/jpeg"
+    : String.fromCharCode(...b.slice(8, 12)) === "WEBP" ? "image/webp" : /ftyp(heic|heix|hevc|mif1|msf1|heif)/.test(head) ? "image/heic" : "image/jpeg";
+  let bin = ""; for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return { inline_data: { mime_type: mime, data: btoa(bin) } };
+}
+async function gemini(env, system, parts, wantJson) {
+  const key = env.GEMINI_API_KEY;
+  if (!key) return null;
+  for (const model of geminiModels(env)) {
+    const blocked = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind("gemini_block:" + model).first();
+    if (blocked && +blocked.value > Date.now()) continue;               // this model's free day is used up
+    try {
+      const res = await fetch(`${env.GEMINI_BASE || "https://generativelanguage.googleapis.com"}/v1beta/models/${model}:generateContent`, {
+        method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+          contents: [{ role: "user", parts }],
+          generationConfig: { temperature: wantJson ? 0.1 : 0, maxOutputTokens: 8192, ...(wantJson ? { responseMimeType: "application/json" } : {}) }
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        bump("gemini_calls");
+        const text = ((((data.candidates || [])[0] || {}).content || {}).parts || []).filter(x => !x.thought).map(x => x.text || "").join("");
+        await geminiNote(env, "ok", model);
+        if (text.trim()) return text;
+        continue;                                                          // empty or blocked reply: try the next one
+      }
+      const msg = (data.error && data.error.message) || "HTTP " + res.status;
+      if (res.status === 429) {
+        const daily = /per.?day|PerDay|daily/i.test(JSON.stringify(data));
+        if (daily) await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").bind("gemini_block:" + model, String(nextPacificMidnight())).run();
+        await geminiNote(env, daily ? "limit" : "busy", model, msg);
+        continue;
+      }
+      await geminiNote(env, "error", model, res.status + ": " + msg);
+      if (res.status === 401 || res.status === 403 || /api key/i.test(msg)) break;   // bad key: no point trying other models
+    } catch (e) { await geminiNote(env, "error", model, e && e.message); }
+  }
+  return null;
+}
+async function geminiStatus(env) {
+  if (!env.GEMINI_API_KEY) return { state: "off" };
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'gemini:status'").first();
+  let st = {}; try { st = JSON.parse(row && row.value || "{}"); } catch {}
+  const models = geminiModels(env), blocks = [];
+  for (const mdl of models) { const b = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind("gemini_block:" + mdl).first(); if (b && +b.value > Date.now()) blocks.push(+b.value); }
+  return { state: blocks.length === models.length ? "limit" : (st.state || "ready"), msg: st.msg || "", at: st.at || 0, resetAt: blocks.length === models.length ? Math.min(...blocks) : 0 };
+}
+
 /* ---------------- screenshots ---------------- */
+const OCR_PROMPT = "Transcribe all of the text in this image exactly as written, top to bottom, one line per line. Include ingredient amounts exactly. Do not add anything else.";
 async function ocrImage(env, bytes) {
+  const g = await gemini(env, "", [{ text: OCR_PROMPT }, imagePart(bytes)], false);
+  if (g !== null) return g.trim();
   if (!env.AI) throw new Error("ai_missing");
   const input = { messages: [{ role: "user", content: "Transcribe all of the text in this image exactly as written, top to bottom, one line per line. Include ingredient amounts exactly. Do not add anything else." }],
     image: [...bytes], max_tokens: 2000, temperature: 0 };

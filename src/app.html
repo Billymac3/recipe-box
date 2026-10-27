@@ -391,6 +391,8 @@ button,.tabs,.chip,.btn{-webkit-user-select:none;user-select:none;-webkit-touch-
 .offline{background:var(--ink);color:var(--bg);border-radius:var(--radius-sm);padding:10px 14px;font-size:.9rem;font-weight:700;margin-bottom:12px}
 .warnbox{border-color:#c98a00;background:color-mix(in srgb, #ffb81f 18%, var(--card))}
 .ubar{display:grid;gap:5px}
+.gem{border:1.5px solid var(--edge);border-radius:14px;padding:12px 14px;background:var(--bg)}
+.gem .btn-row{margin-top:8px}
 .ubar-h{display:flex;justify-content:space-between;gap:10px;font-size:.88rem}
 .ubar-h span{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
 .ubar-t{height:10px;border-radius:6px;background:var(--line);overflow:hidden}
@@ -530,13 +532,29 @@ function usageHtml(){
   const bar = (label, val, max, pct, note) => `<div class="ubar ${pct >= .9 ? "bad" : pct >= .7 ? "warn" : ""}"><div class="ubar-h"><b>${label}</b><span>${note}</span></div><div class="ubar-t"><i style="width:${Math.min(100, Math.max(1.5, pct * 100)).toFixed(1)}%"></i></div></div>`;
   const days = (S.usageWeek && S.usageWeek.days) || [];
   const byDay = {}; days.forEach(r => { (byDay[r.day] ||= {})[r.key] = r.n; });
-  const hist = Object.keys(byDay).sort().slice(-7).map(d => `<li><span>${new Date(d + "T12:00Z").toLocaleDateString(undefined, { weekday: "short" })}</span><span>${Math.round(byDay[d].requests || 0).toLocaleString()} requests</span><span>${Math.round(byDay[d].ai_calls || 0)} AI ${Math.round(byDay[d].ai_calls || 0) === 1 ? "read" : "reads"}</span></li>`).join("");
+  const hist = Object.keys(byDay).sort().slice(-7).map(d => `<li><span>${new Date(d + "T12:00Z").toLocaleDateString(undefined, { weekday: "short" })}</span><span>${Math.round(byDay[d].requests || 0).toLocaleString()} requests</span><span>${Math.round((byDay[d].ai_calls || 0) + (byDay[d].gemini_calls || 0))} AI ${Math.round((byDay[d].ai_calls || 0) + (byDay[d].gemini_calls || 0)) === 1 ? "read" : "reads"}</span></li>`).join("");
   return `<p class="small muted" style="margin:0">Today so far. The request and AI limits reset every day at ${new Date(Date.UTC(2026, 0, 1)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} your time.</p>
     ${bar("Server requests", u.requests, 100000, u.pct.requests, `${u.requests.toLocaleString()} of 100,000`)}
-    ${bar("AI recipe reading", u.neurons, 10000, u.pct.neurons, `${Math.round(u.pct.neurons * 100)}% · ${u.imports} ${u.imports === 1 ? "read" : "reads"}`)}
+    ${geminiHtml(u)}
+    ${bar(u.geminiStatus && u.geminiStatus.state !== "off" ? "Cloudflare AI (backup)" : "AI recipe reading", u.neurons, 10000, u.pct.neurons, `${Math.round(u.pct.neurons * 100)}% · ${u.imports} ${u.imports === 1 ? "read" : "reads"}`)}
     ${bar("Storage", u.dbsize, 5e9, u.pct.dbsize, `${fmtN(u.dbsize)} of 5 GB`)}
     ${hist ? `<div class="cook-h">Last 7 days</div><ul class="uhist">${hist}</ul>` : ""}
     <p class="hint" style="margin:0">Every screen you open, photo you load and timer alert sent is a request. Counts are close estimates kept by the app itself. Over a limit, that feature pauses until the reset; nothing is ever charged. You'll see a warning on the Recipes screen at 70%.</p>`;
+}
+function geminiHtml(u){
+  const g = u.geminiStatus || { state: "off" }, n = u.gemini || 0;
+  const t = ms => new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const line = {
+    off: `Not set up. Add a free key from Google AI Studio as the Cloudflare secret <b>GEMINI_API_KEY</b> to get many more free AI reads a day.`,
+    ready: `Set up. It reads recipes first; Cloudflare's AI only steps in if Gemini can't.`,
+    ok: `Working. It reads recipes first; Cloudflare's AI only steps in if Gemini can't.`,
+    busy: `Working, but briefly hit its per-minute limit, so Cloudflare's AI covered.`,
+    limit: `Today's free Gemini reads are used up${g.resetAt ? " until " + t(g.resetAt) : ""}. Cloudflare's AI is covering until then.`,
+    error: `Problem: ${esc(g.msg || "Gemini didn't answer")}. Cloudflare's AI is covering. Check the key in Cloudflare.`
+  }[g.state] || "";
+  return `<div class="gem"><div class="ubar-h"><b>Gemini (Google)</b><span>${g.state === "off" ? "Off" : n.toLocaleString() + " " + (n === 1 ? "read" : "reads") + " today"}</span></div>
+    <p class="hint" style="margin:4px 0 0">${line}</p>
+    ${g.state !== "off" ? `<div class="btn-row"><button class="btn ghost" data-act="gemtest">Check Gemini</button></div>` : ""}</div>`;
 }
 function usageBanner(){
   const u = S.usage; if (!S.me || !S.me.is_admin || !u) return "";
@@ -548,6 +566,11 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.3", items: [
+    "Many more free AI recipe reads a day: when the app owner adds a free Google Gemini key, Gemini reads links, captions and screenshots first",
+    "Cloudflare's AI becomes the backup, and the no-AI sorter is still there after that, so importing keeps working",
+    "The usage section shows Gemini's reads today and whether it's working, with a Check Gemini button"
+  ] },
   { version: "3.2", items: [
     "Lighter on the free plan: the server no longer checks for timer alerts every minute. It wakes only when a cooking timer is running, so a quiet day uses almost nothing",
     "The usage meter now says \"Server requests\" instead of \"App visits\", which is what it really counts"
@@ -1873,6 +1896,13 @@ app.addEventListener("click", async e => {
     else if (a === "news") { S.newsFrom = S.tab; S.tab = "news"; renderNews(); fab.hidden = true; }
     else if (a === "newsback") { go(S.newsFrom || "me"); }
     else if (a === "newsx") { markSeen(); renderList(); }
+    else if (a === "gemtest") {
+      t.disabled = true; t.textContent = "Checking…";
+      api("/api/admin/gemini-test", { method: "POST", body: {} }).then(r => {
+        toast(r.ok ? "Gemini is working" : "Gemini didn't answer. Cloudflare's AI will cover.");
+        if (S.usage) S.usage.geminiStatus = r.status; if (r.ok && S.usage) S.usage.gemini = (S.usage.gemini || 0) + 1; renderMe();
+      }).catch(() => { toast("Couldn't check right now"); renderMe(); });
+    }
     else if (a === "usagego") { S.meOpen = "usage"; go("me"); api("/api/admin/usage").then(r => { S.usageWeek = r; S.usage = r.today; if (S.tab === "me") renderMe(); }).catch(() => {}); }
     else if (a === "hhsave") { const name = document.getElementById("hh-name").value.trim(); S.household = (await api("/api/household", { method: "PUT", body: { name } })).household; renderMe(); toast("Household renamed"); }
     else if (a === "starter") { S.starter = await api("/api/admin/starter", { method: "POST" }); if (S.admin) S.admin.openStarters++; renderMe(); }

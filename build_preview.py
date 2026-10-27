@@ -14,7 +14,7 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
   const ME = { id: "u1", email: "you@example.com", name: "Billy", quick_key: "example-key-only-in-preview", is_admin: true };
   let HOUSEHOLD = { id: "h1", name: "Our household" };
   const HOUSEHOLDS = [{ id: "h1", name: "Our household", members: 2, recipes: 6 }, { id: "h2", name: "The Lees (example)", members: 3, recipes: 14 }];
-  const usage = () => ({ requests: 4210, neurons: 1840, imports: 6, dbsize: 3.4e6, pct: { requests: .0421, neurons: .184, dbsize: .00068 } });
+  const usage = () => ({ requests: 4210, neurons: 310, imports: 1, gemini: 11, geminiStatus: { state: "ok" }, dbsize: 3.4e6, pct: { requests: .0421, neurons: .031, dbsize: .00068 } });
   const R = (o) => Object.assign({ id: uid(), category: "Mains", prep_min: 0, cook_min: 0, servings: "", ingredients: "", steps: "", notes: "", tags: "", source_url: "", source_name: "", image_url: "", photo_id: "", favorite: 0, added_by: "u1", created: now, updated: now }, o);
   const db = {
     recipes: [
@@ -73,6 +73,7 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     if (p === "/api/admin/households") return ok({ households: HOUSEHOLDS, openStarters: 0 });
     if (p === "/api/admin/starter" && m === "POST") return ok({ url: "https://recipe-box.example.workers.dev/?start=n7q2x9kfp3wmz8ra", expires: Date.now() + 14 * 864e5 });
     if (p === "/api/admin/starter") return ok({ ok: true });
+    if (p === "/api/admin/gemini-test") return ok({ ok: true, status: { state: "ok" } });
     if (p === "/api/admin/usage") { const d = (k) => new Date(Date.now() - k * 864e5).toISOString().slice(0, 10); const days = []; [[6,3100,2],[5,2800,1],[4,5200,7],[3,3900,3],[2,4400,4],[1,6100,9],[0,4210,6]].forEach(([k, r, a]) => { days.push({ day: d(k), key: "requests", n: r }, { day: d(k), key: "ai_calls", n: a }); }); return ok({ today: usage(), days, limits: {} }); }
     if (p === "/api/import/ocr") { await wait(700); return ok({ text: "Garlic butter shrimp 🍤\nYou need: 1 lb shrimp, 4 tbsp butter, 5 cloves garlic, juice of 1 lemon, parsley\nMelt butter, add garlic 1 minute, add shrimp 2-3 minutes per side, finish with lemon." }); }
     if (p.startsWith("/api/push/")) return ok({ ok: true, id: uid() });

@@ -28,7 +28,7 @@ a{color:var(--accent)}
 <p>Only the people in your household. Each household's recipes, lists and plans are kept separate from every other household. The person who runs this app can see household names, member counts and overall usage numbers so they can keep it running.</p>
 
 <h2>Recipe imports</h2>
-<p>When you import from a link, a caption or a screenshot, that text or image is sent to Cloudflare Workers AI to turn it into a recipe. It isn't used for anything else.</p>
+<p>When you import from a link, a caption or a screenshot, that text or image is sent to an AI service to turn it into a recipe: Google Gemini first (if the app owner has turned it on), otherwise Cloudflare Workers AI. Clearly laid-out recipes are sorted by the app itself and not sent anywhere. Google may use what is sent through Gemini's free service to improve its products, so avoid importing anything private. This app uses it only to read the recipe.</p>
 
 <h2>Timer alerts</h2>
 <p>If you turn on lock-screen alerts, your phone's notification address is stored so a timer can alert you. Turn alerts off in your phone's settings at any time.</p>

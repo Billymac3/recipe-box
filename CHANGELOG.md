@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [3.3](#33--not-live-yet) | not live yet | — | Google Gemini reads recipes first; Cloudflare AI becomes the backup |
 | [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
 | [3.1](#31--2026-10-27) | 2026-10-27 | [`59ad411`](https://github.com/Billymac3/recipe-box/commit/59ad411) | Stronger contrast, depth, clearer meal plan |
 | [3.0](#30--2026-10-26) | 2026-10-26 | [`1ef22ad`](https://github.com/Billymac3/recipe-box/commit/1ef22ad) | Separate households, lock-screen alerts, offline, usage meter, no-AI recipe sorter |
@@ -15,6 +16,70 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 3.3 — not live yet
+
+**Why:** Cloudflare's free AI covers only about 30–65 AI recipe reads a day, shared by every household. Google's Gemini API has a much larger free allowance that's counted separately for each model. Using it first, and keeping Cloudflare as a backup, gives many more free imports, and the app keeps working if Google changes its terms.
+
+### What changed for people using the app
+- When the app owner adds a free Gemini key, Gemini reads links, captions and screenshots first.
+- If Gemini can't help (its daily limit is used up, it's busy, or the key is wrong), Cloudflare's AI takes over. The no-AI sorter is still the last fallback, so importing always works.
+- Clearly laid-out recipes are still sorted without any AI.
+- **Usage section (app owner):**
+  - A Gemini card shows today's reads and its status: not set up, working, daily limit reached (with the time it comes back), or a problem message.
+  - A **Check Gemini** button sends one tiny test request.
+  - The Cloudflare bar is relabeled **Cloudflare AI (backup)**.
+  - The 7-day history counts AI reads from both.
+- The privacy page now says recipe text and screenshots may go to Google Gemini, and that Google may use free-tier requests to improve its products.
+
+### Technical details
+**AI order** (the same for link, pasted text, Share-shortcut, screenshot-to-text and photo imports):
+1. Gemini `gemini-3.5-flash-lite`
+2. Gemini `gemini-flash-latest`
+3. Workers AI (unchanged models)
+4. the rule-based sorter
+
+**Gemini calls**
+- Each Gemini model has its own free daily quota, so trying two models roughly doubles the free capacity.
+- New `gemini()` helper calls Google's `generateContent` REST API directly with `fetch`, sending the key in the `x-goog-api-key` header.
+- Recipe extraction asks for JSON output (`responseMimeType: application/json`) and reuses the existing prompt and `normalizeAi()`.
+- Screenshot-to-text asks for plain text.
+- Images are sent as base64 `inline_data`. The image type (PNG, JPEG, WebP or HEIC) is detected from the file's first bytes.
+- "Thinking" parts in Gemini's reply are ignored.
+
+**Limits and errors**
+- A daily-quota `429` marks that model as used up until midnight Pacific (Google's reset) and moves on to the next model.
+- A per-minute `429` just moves on and isn't remembered.
+- A bad key (`400`/`401`/`403`) stops trying Gemini for that request.
+- Any other error moves on to the next option.
+- The last Gemini result is saved in `settings` (`gemini:status`). Daily blocks are saved as `gemini_block:<model>`.
+
+**Usage meter and endpoints**
+- The usage meter counts `gemini_calls`. `/api/me` and `/api/admin/usage` include `gemini` and `geminiStatus` for the owner.
+- New `POST /api/admin/gemini-test` (owner only).
+
+**New Cloudflare settings (all optional)**
+- `GEMINI_API_KEY` (secret) turns Gemini on.
+- `GEMINI_MODELS` overrides the model order, comma-separated, so a retired model can be swapped without a code change.
+- `GEMINI_BASE` is only for testing against a stand-in server.
+
+**Fix:** on a brand-new install, the first account to sign up now becomes the app owner. Before, owner status was only assigned during the 3.0 upgrade. Existing installs are unaffected.
+
+**Tested locally** against a stand-in Gemini server:
+- Recipes come back from the first model.
+- A daily-limited first model hands off to the second, and later imports skip the limited model.
+- With both models limited, the import falls back to Cloudflare's AI.
+- A per-minute limit isn't remembered.
+- A bad key shows a clear error in the usage card.
+- Screenshots send the right image type.
+- A tidy recipe makes no AI call.
+- Only the owner can use the test button.
+
+`APP_VERSION` is now 3.3.
+
+**Files:** `src/server.js`, `src/app.html`, `src/privacy.html`, `build_preview.py`, `dist/worker.js`
 
 ---
 
