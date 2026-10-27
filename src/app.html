@@ -175,12 +175,27 @@ a.btn{text-decoration:none;color:var(--ink)}
 .day-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .day-h b{font-family:var(--display);font-weight:var(--display-weight);font-size:1.15rem}
 .day-h span{font-size:.82rem;font-weight:700;color:var(--muted)}
+.meals{display:grid;gap:8px;margin-top:10px}
+.meal{display:flex;align-items:center;gap:4px;background:var(--accent-soft);border:1.5px solid color-mix(in srgb, var(--accent-ink) 35%, transparent);border-left:5px solid var(--accent);border-radius:var(--radius-sm);padding:4px 4px 4px 0;box-shadow:var(--shadow-sm)}
+.meal.note{background:var(--card);border-color:var(--edge);border-left-color:var(--edge);border-style:dashed;border-left-style:solid}
+.meal-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;background:none;border:0;padding:6px 8px 6px 10px;text-align:left;color:var(--ink)}
+.meal-pic{width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none;background:var(--card)}
+.meal-pic.ini{display:grid;place-items:center;font-family:var(--display);font-weight:var(--display-weight);font-size:1.3rem;color:var(--accent-ink);border:1.5px solid var(--edge)}
+.meal.note .meal-pic.ini{font-size:1.1rem;color:var(--muted);background:var(--bg)}
+.meal-t{flex:1;min-width:0;display:grid;gap:1px}
+.meal-t b{font-size:1.02rem;font-weight:800;line-height:1.25;overflow-wrap:anywhere}
+.meal-t span{font-size:.8rem;font-weight:600;color:var(--muted)}
+.meal-go{font-size:1.6rem;line-height:1;color:var(--accent-ink);font-weight:700}
+.nothing{margin:8px 0 0;font-size:.88rem;color:var(--muted);font-style:italic}
+.day.free{background:color-mix(in srgb, var(--card) 70%, var(--bg));box-shadow:none}
+.today-pill{font-style:normal;background:var(--accent);color:var(--on-accent);border-radius:999px;padding:2px 9px;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;margin-right:8px;vertical-align:1px}
+.day.today{border:2px solid var(--accent)}
 .entry{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
 .entry:first-of-type{margin-top:8px}
 .entry .name{flex:1;min-width:0;overflow-wrap:anywhere;background:none;border:0;text-align:left;padding:0}
 .entry .name.link{color:var(--accent-ink);font-weight:800}
 .x{border:0;background:transparent;color:var(--muted);font-size:1.25rem;padding:4px 8px;line-height:1}
-.addday{border:0;background:none;color:var(--accent-ink);font-weight:800;padding:8px 0 0;font-size:.93rem}
+.addday{border:0;background:none;color:var(--accent-ink);font-weight:800;padding:10px 0 2px;font-size:.93rem}
 
 /* grocery */
 .g-add{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
@@ -535,6 +550,7 @@ function usageBanner(){
 const CHANGELOG = [
   { version: "3.1", items: [
     "Elements stand out more: cards, lists, chips and buttons lift off a lightly tinted page with soft shadows",
+    "Meal plan: each meal is its own colored tile with a picture and cook time, typed notes look different, empty days say \"Nothing planned\", and today is clearly marked",
     "In dark mode, cards and lists are clearly lighter than the background",
     "Bolder section headings with a color marker, and a clear marker on the active tab",
     "Better contrast everywhere: text boxes, buttons, chips and lists have clearer outlines in every color and in light and dark",
@@ -1348,14 +1364,26 @@ function renderPlan(){
     <div class="week-nav"><button class="btn ghost" data-act="wkprev" aria-label="Previous week">←</button><strong>${esc(label)}</strong><button class="btn ghost" data-act="wknext" aria-label="Next week">→</button></div>
     <div class="days">${days.map(d => {
       const key = ymd(d), list = byDay[key] || [];
-      return `<section class="day ${key===todayStr?"today":""}"><div class="day-h"><b>${d.toLocaleDateString(undefined,{weekday:"long"})}</b><span>${d.toLocaleDateString(undefined,{month:"short",day:"numeric"})}${key===todayStr?" · today":""}</span></div>
-        ${list.map(p => { const r = p.recipe_id && S.recipes.find(x => x.id === p.recipe_id);
-          return `<div class="entry" data-lp="p:${esc(p.id)}">${r ? `<button class="name link" data-open="${esc(r.id)}">${esc(r.title)}</button>` : `<span class="name">${esc(p.note || "(deleted recipe)")}</span>`}<button class="x" data-unplan="${esc(p.id)}" aria-label="Remove">×</button></div>`; }).join("")}
+      const isToday = key === todayStr;
+      // each meal is its own tile: recipes show a thumbnail, cook time and an arrow; typed notes look different
+      const meals = list.map(p => { const r = p.recipe_id && S.recipes.find(x => x.id === p.recipe_id);
+        if (r) {
+          const img = imgFor(r), total = (+r.prep_min||0) + (+r.cook_min||0);
+          const meta = [mins(total), r.category].filter(Boolean).join(" · ");
+          return `<div class="meal" data-lp="p:${esc(p.id)}"><button class="meal-main" data-open="${esc(r.id)}">
+            ${img ? `<img class="meal-pic" src="${esc(img)}" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'meal-pic ini',textContent:'${esc((r.title||"?").trim()[0].toUpperCase()).replace(/'/g,"")}'}))">` : `<span class="meal-pic ini" aria-hidden="true">${esc((r.title||"?").trim()[0].toUpperCase())}</span>`}
+            <span class="meal-t"><b>${esc(r.title)}</b>${meta ? `<span>${esc(meta)}</span>` : ""}</span><span class="meal-go" aria-hidden="true">›</span></button>
+            <button class="x" data-unplan="${esc(p.id)}" aria-label="Remove ${esc(r.title)}">×</button></div>`;
+        }
+        return `<div class="meal note" data-lp="p:${esc(p.id)}"><span class="meal-main"><span class="meal-pic ini" aria-hidden="true">✎</span><span class="meal-t"><b>${esc(p.note || "(deleted recipe)")}</b></span></span><button class="x" data-unplan="${esc(p.id)}" aria-label="Remove">×</button></div>`;
+      }).join("");
+      return `<section class="day ${isToday ? "today" : ""} ${list.length ? "" : "free"}"><div class="day-h"><b>${d.toLocaleDateString(undefined,{weekday:"long"})}</b><span>${isToday ? `<i class="today-pill">Today</i>` : ""}${d.toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span></div>
+        ${meals ? `<div class="meals">${meals}</div>` : (S.addingDay === key ? "" : `<p class="nothing">Nothing planned</p>`)}
         ${S.addingDay === key ? `<div class="inline-panel">
             <select id="pl-recipe" class="inp"><option value="">Choose a recipe…</option>${sorted.map(r => `<option value="${esc(r.id)}">${esc(r.title)}</option>`).join("")}</select>
             <input id="pl-note" class="inp" placeholder="Or type something (Leftovers, Eating out)" maxlength="200">
             <div class="btn-row"><button class="btn primary" data-act="pladd" data-day="${key}">Add</button><button class="btn ghost" data-act="plcancel">Cancel</button></div></div>`
-          : `<button class="addday" data-addday="${key}">+ Add</button>`}
+          : `<button class="addday" data-addday="${key}">+ Add a meal</button>`}
       </section>`; }).join("")}</div>
     ${S.plan.some(p => p.recipe_id) ? `<button class="btn block" style="margin-top:14px" data-act="weekgrocery">Add this week's ingredients to groceries</button>` : ""}`;
 }
