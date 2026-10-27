@@ -3,18 +3,18 @@
 Every release of Recipe Box, newest first. Each version lists what changed for people using the app, then the technical details behind it.
 
 - The short version of these notes is shown in the app under **Me → What's new**. It comes from the `CHANGELOG` list in `src/app.html`.
-- Git tags (`v2.0` … `v3.2`) mark the commit each version shipped from.
+- The **Commit** column links to the exact code each version shipped from.
 - Recipes, lists and accounts live in the Cloudflare D1 database, not in this repository, so no release here has ever replaced or deleted anyone's data.
 
-| Version | Went live | Headline |
-|---|---|---|
-| [3.2](#32--2026-10-27) | 2026-10-27 | Timer alerts wake on demand; usage meter relabeled |
-| [3.1](#31--2026-10-27) | 2026-10-27 | Stronger contrast, depth, clearer meal plan |
-| [3.0](#30--2026-10-26) | 2026-10-26 | Separate households, lock-screen alerts, offline, usage meter, no-AI recipe sorter |
-| [2.2](#22--2026-10-26) | 2026-10-26 | Grocery Edit mode with in-place renaming |
-| [2.1](#21--2026-10-26) | 2026-10-26 | Any Store group, item links and photos |
-| [2.0](#20--2026-10-25) | 2026-10-25 | New look, cooking mode, timers, stores, press-and-hold |
-| [1.0](#10--2026-10-21) | 2026-10-21 | First version |
+| Version | Went live | Commit | Headline |
+|---|---|---|---|
+| [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
+| [3.1](#31--2026-10-27) | 2026-10-27 | [`59ad411`](https://github.com/Billymac3/recipe-box/commit/59ad411) | Stronger contrast, depth, clearer meal plan |
+| [3.0](#30--2026-10-26) | 2026-10-26 | [`1ef22ad`](https://github.com/Billymac3/recipe-box/commit/1ef22ad) | Separate households, lock-screen alerts, offline, usage meter, no-AI recipe sorter |
+| [2.2](#22--2026-10-26) | 2026-10-26 | [`d65adde`](https://github.com/Billymac3/recipe-box/commit/d65adde) | Grocery Edit mode with in-place renaming |
+| [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
+| [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
+| [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
 
 ---
 
@@ -39,7 +39,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 - Expected load: about 0 background requests on idle days (down from 1,440). Durable Object requests have their own free allowance of 100,000 a day.
 - `APP_VERSION` is now 3.2.
 - Repository housekeeping:
-  - Added this `CHANGELOG.md` and git tags for every version.
+  - Added this `CHANGELOG.md`, with the commit each version shipped from.
   - Updated `README.md`.
   - Removed a stray `__pycache__` build file and ignored it in `.gitignore`.
 

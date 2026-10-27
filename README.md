@@ -40,7 +40,7 @@ It runs free on Cloudflare: Workers, D1, Workers AI and Durable Objects.
 1. Edit `src/` on `next` and bump `APP_VERSION` in `src/server.js`.
 2. Add a short entry to `CHANGELOG` in `src/app.html` (shown in the app) and a detailed entry to `CHANGELOG.md`.
 3. Run `python3 build.py` and commit `dist/worker.js` along with the sources.
-4. Merge `next` into `main`, push, and tag the release (`git tag v3.2 && git push --tags`).
+4. Merge `next` into `main` and push. Add the release's commit to the table at the top of `CHANGELOG.md`.
 
 **Rollback:** Cloudflare dashboard → Worker → Deployments → Rollback.
 
