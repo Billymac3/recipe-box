@@ -1,7 +1,10 @@
 """Generates the color palettes and font styles for the app (light + dark for every palette)."""
 BASE_KEYS = ["bg","card","ink","muted","line","accent","accent-soft","on-accent","accent-ink","pop","pop-soft","danger"]
 KEYS = BASE_KEYS + ["edge", "pop-ink"]
-LIGHT_SHADOW = "0 1px 2px rgba(0,0,0,.05), 0 6px 18px rgba(0,0,0,.06)"
+LIGHT_SHADOW = "0 1px 2px rgba(20,12,10,.10), 0 4px 14px rgba(20,12,10,.09)"
+LIGHT_SHADOW_SM = "0 1px 2px rgba(20,12,10,.12), 0 2px 6px rgba(20,12,10,.06)"
+DARK_SHADOW = "0 1px 0 rgba(255,255,255,.05) inset, 0 6px 18px rgba(0,0,0,.5)"
+DARK_SHADOW_SM = "0 1px 0 rgba(255,255,255,.06) inset, 0 2px 6px rgba(0,0,0,.45)"
 PALETTES = {
  # id: (name, light, dark)
  "tomato": ("Tomato",
@@ -56,6 +59,9 @@ def _push(color, toward, against, need):
 def tune(vals, dark):
     t = dict(zip(BASE_KEYS, vals))
     far = "#ffffff" if dark else "#000000"
+    # depth: the page is a shade off the cards so cards, lists and buttons lift off it
+    if dark: t["card"] = _push(t["card"], t["ink"], [t["bg"]], 1.42); t["accent-soft"] = _push(t["accent-soft"], t["ink"], [t["bg"]], 1.25)
+    else: t["bg"] = _push(t["bg"], t["muted"], [t["card"]], 1.18)
     surfaces = [t["bg"], t["card"]]
     t["ink"] = _push(t["ink"], far, surfaces, 12)
     t["muted"] = _push(t["muted"], t["ink"], surfaces + [t["accent-soft"]], 6)
@@ -72,7 +78,7 @@ def tune(vals, dark):
 def toks(vals, dark):
     vals = tune(vals, dark)
     t = "; ".join(f"--{k}:{v}" for k, v in zip(KEYS, vals))
-    return t + ("; --shadow:none; color-scheme:dark" if dark else f"; --shadow:{LIGHT_SHADOW}; color-scheme:light")
+    return t + (f"; --shadow:{DARK_SHADOW}; --shadow-sm:{DARK_SHADOW_SM}; color-scheme:dark" if dark else f"; --shadow:{LIGHT_SHADOW}; --shadow-sm:{LIGHT_SHADOW_SM}; color-scheme:light")
 
 def css():
     out = ["/* Colors: 6 palettes, each with light and dark. Auto follows the phone; data-theme forces one. */"]
