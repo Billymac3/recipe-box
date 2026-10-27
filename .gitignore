@@ -2,3 +2,4 @@ node_modules/
 .wrangler/
 *.log
 dist/preview.html
+__pycache__/
