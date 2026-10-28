@@ -8,7 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
-| [3.5](#35--not-live-yet) | not live yet | — | Find a photo searches Wikimedia from the phone |
+| [3.5](#35--2026-10-27) | 2026-10-27 | [`7f218e9`](https://github.com/Billymac3/recipe-box/commit/7f218e9) | Find a photo searches Wikimedia from the phone |
 | [3.4](#34--2026-10-27) | 2026-10-27 | [`cab4bca`](https://github.com/Billymac3/recipe-box/commit/cab4bca) | Find a photo uses Wikimedia Commons when there's no Pexels key |
 | [3.3](#33--2026-10-27) | 2026-10-27 | [`ae20270`](https://github.com/Billymac3/recipe-box/commit/ae20270) | Gemini reads recipes first, in-app photo search, owner locked to one email |
 | [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
@@ -21,7 +21,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 ---
 
-## 3.5 — not live yet
+## 3.5 — 2026-10-27
 
 **Why:** After 3.4, Find a photo still said "Photo search isn't answering right now." Wikimedia, like Openverse, turns away many requests that come from cloud servers such as Cloudflare Workers. Every search the app's server sent was refused before it reached the photo library.
 
