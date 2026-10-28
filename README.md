@@ -30,7 +30,7 @@ It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with o
   - `INVITE_CODE` lets someone join the first household.
   - `ADSENSE_CLIENT` and `ADSENSE_SLOT` are optional. They turn on the banner ad.
   - `OWNER_EMAIL` is the only account that can see usage and use the owner tools. Nobody is made owner automatically.
-  - `PEXELS_API_KEY` is optional. It's a free key from pexels.com/api that improves Find a photo. Without it, photos come from Openverse.
+  - `PEXELS_API_KEY` is optional. It's a free key from pexels.com/api that improves Find a photo. Without it, photos come from Wikimedia Commons.
   - `GEMINI_API_KEY` is optional. It's a free key from Google AI Studio that makes Gemini read recipes first, with Cloudflare's AI as the backup. `GEMINI_MODELS` (a comma-separated list) can override which Gemini models are tried, in order.
 - **No cron triggers.** Timer alerts use a Durable Object alarm that wakes only when a timer is due.
 - **The database updates itself.** Schema changes run on the first request after a deploy. They only add tables and columns and never delete data.

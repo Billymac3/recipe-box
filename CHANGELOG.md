@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [3.4](#34--not-live-yet) | not live yet | — | Find a photo uses Wikimedia Commons when there's no Pexels key |
 | [3.3](#33--2026-10-27) | 2026-10-27 | [`ae20270`](https://github.com/Billymac3/recipe-box/commit/ae20270) | Gemini reads recipes first, in-app photo search, owner locked to one email |
 | [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
 | [3.1](#31--2026-10-27) | 2026-10-27 | [`59ad411`](https://github.com/Billymac3/recipe-box/commit/59ad411) | Stronger contrast, depth, clearer meal plan |
@@ -16,6 +17,36 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 3.4 — not live yet
+
+**Why:** Right after 3.3 went live, Find a photo said "Photo search isn't answering right now." There was no Pexels key yet, so the app was using Openverse. Openverse puts requests from server networks behind a Cloudflare challenge page, and app servers can't pass it. Other developers have reported the same thing ([WordPress/openverse#5625](https://github.com/WordPress/openverse/issues/5625)), with no fix so far. Every search from the app failed.
+
+### What changed for people using the app
+- Without a Pexels key, Find a photo now uses **Wikimedia Commons**, the free, openly licensed photo library behind Wikipedia.
+- With a Pexels key, Pexels is still tried first, and Wikimedia is the fallback.
+- Credits read "Photo by … via Wikimedia Commons (license)" and link to the photo's page.
+
+### Technical details
+- Removed Openverse. Added `wikimediaSearch()`, which uses the MediaWiki API on commons.wikimedia.org:
+  - It searches the file namespace for photos only (`filetype:bitmap`), 24 a page, using `gsroffset` for paging.
+  - Results come back in search-rank order, and SVG and other non-photo files are dropped.
+  - Each result has a 500 px thumbnail.
+  - Credits come from the photo's author and license details, with HTML stripped.
+- Ids are now `wm:<pageid>`. Saving looks the photo up again by page id and downloads Wikimedia's 1280 px copy, falling back to the original. The app then shrinks it to 1000 px as before.
+- Requests send a descriptive user agent, as Wikimedia's rules ask, and use standard thumbnail widths.
+- Search failures are now written to the Worker log with the reason, so the cause can be found from Cloudflare's logs.
+- `WIKIMEDIA_BASE` is only for testing against a stand-in server.
+- Tested against a stand-in Wikimedia API:
+  - Results are ranked, non-photos are filtered out and credits are cleaned up.
+  - Saving fetches the 1280 px copy and sends the credit to the app.
+  - The right user agent is sent.
+- Not tested against the real Wikimedia from here (blocked from this test setup). The first real search will be in the app.
+- `APP_VERSION` is now 3.4.
+
+**Files:** `src/server.js`, `src/app.html`, `dist/worker.js`, `README.md`
 
 ---
 

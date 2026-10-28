@@ -4,7 +4,7 @@
 // Secrets: INVITE_CODE (joins the first household), optional ADSENSE_CLIENT /
 // ADSENSE_SLOT (turn on the banner ad), optional GEMINI_API_KEY (Google's free AI,
 // tried before Workers AI), GEMINI_MODELS (comma list to override the model order) and
-// PEXELS_API_KEY (better photo search; Openverse is used without it) and OWNER_EMAIL
+// PEXELS_API_KEY (better photo search; Wikimedia Commons is used without it) and OWNER_EMAIL
 // (the only account that can see usage and run the admin tools).
 // Copyright (c) 2026 Billy McIntyre. All rights reserved. See LICENSE.
 // A Durable Object alarm (binding: TIMERS) wakes only when a cooking timer is due.
@@ -17,7 +17,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "3.3";
+const APP_VERSION = "3.4";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -677,7 +677,7 @@ async function api(req, env, url) {
     const q = String(url.searchParams.get("q") || "").trim().slice(0, 100), page = Math.min(10, Math.max(1, +url.searchParams.get("page") || 1));
     if (!q) return json({ results: [] });
     try { return json(await photoSearch(env, q, page)); }
-    catch { return json({ error: "Photo search isn't answering right now. Try again in a minute." }); }
+    catch (e) { console.log("photo search failed", e && e.message); return json({ error: "Photo search isn't answering right now. Try again in a minute." }); }
   }
   if (p === "/api/photo-search/image" && m === "GET") {
     try { return await fetchPickedPhoto(env, url.searchParams.get("id")); }
@@ -904,26 +904,38 @@ function toB64(b) { let bin = ""; for (let i = 0; i < b.length; i += 0x8000) bin
 
 /* ---------------- photo search ----------------
    Finds example food photos for a recipe. Uses Pexels (better food photos) when the
-   PEXELS_API_KEY secret is set, otherwise Openverse (openly licensed photos, no key needed).
+   PEXELS_API_KEY secret is set, otherwise Wikimedia Commons (no key needed).
    A picked photo is copied into the app's own photo storage so it never disappears. */
-const UA = { "user-agent": "RecipeBox/1.0 (family recipe app)" };
 async function pexelsSearch(env, q, page) {
   const r = await fetch(`${env.PEXELS_BASE || "https://api.pexels.com"}/v1/search?query=${encodeURIComponent(q)}&per_page=24&page=${page}&orientation=landscape`, { headers: { authorization: env.PEXELS_API_KEY } });
   if (!r.ok) throw new Error("pexels " + r.status);
   const d = await r.json();
   return (d.photos || []).map(x => ({ id: "px:" + x.id, thumb: x.src.medium, credit: "Photo by " + x.photographer + " on Pexels", link: x.url, alt: x.alt || "" }));
 }
-async function openverseSearch(env, q, page) {
-  const r = await fetch(`${env.OPENVERSE_BASE || "https://api.openverse.org"}/v1/images/?q=${encodeURIComponent(q)}&page_size=24&page=${page}&mature=false`, { headers: UA });
-  if (!r.ok) throw new Error("openverse " + r.status);
+// Wikimedia Commons: free, openly licensed photos; no key needed. Its rules ask for a
+// descriptive user agent and standard thumbnail widths.
+const WM_UA = { "user-agent": "RecipeBoxFamilyApp/3.4 (private family recipe app; photo search)" };
+const wmBase = env => env.WIKIMEDIA_BASE || "https://commons.wikimedia.org";
+const stripTags = h => String(h || "").replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, " ").trim();
+function wmCredit(ii) {
+  const md = ii.extmetadata || {}, who = stripTags(md.Artist && md.Artist.value).slice(0, 80), lic = stripTags(md.LicenseShortName && md.LicenseShortName.value);
+  return ["Photo", who ? "by " + who : "", "via Wikimedia Commons", lic ? "(" + lic + ")" : ""].filter(Boolean).join(" ");
+}
+async function wikimediaSearch(env, q, page) {
+  const u = wmBase(env) + "/w/api.php?action=query&format=json&formatversion=2&generator=search&gsrnamespace=6&gsrlimit=24"
+    + "&gsroffset=" + (page - 1) * 24 + "&gsrsearch=" + encodeURIComponent(q + " filetype:bitmap")
+    + "&prop=imageinfo&iiprop=url|extmetadata|mime&iiurlwidth=500&iiextmetadatafilter=Artist|LicenseShortName";
+  const r = await fetch(u, { headers: WM_UA });
+  if (!r.ok) throw new Error("wikimedia " + r.status);
   const d = await r.json();
-  return (d.results || []).filter(x => x.thumbnail).map(x => ({ id: "ov:" + x.id, thumb: x.thumbnail, alt: x.title || "",
-    credit: [x.title ? "“" + x.title + "”" : "Photo", x.creator ? "by " + x.creator : "", x.license ? "(CC " + String(x.license).toUpperCase() + (x.license_version ? " " + x.license_version : "") + ")" : ""].filter(Boolean).join(" "),
-    link: x.foreign_landing_url || "" }));
+  return ((d.query && d.query.pages) || []).sort((x, y) => (x.index || 0) - (y.index || 0))
+    .map(pg => ({ pg, ii: (pg.imageinfo || [])[0] }))
+    .filter(({ ii }) => ii && ii.thumburl && /^image\/(jpeg|png|webp)$/.test(ii.mime || "image/jpeg"))
+    .map(({ pg, ii }) => ({ id: "wm:" + pg.pageid, thumb: ii.thumburl, credit: wmCredit(ii), link: ii.descriptionurl || "", alt: String(pg.title || "").replace(/^File:|\.\w+$/g, "") }));
 }
 async function photoSearch(env, q, page) {
   if (env.PEXELS_API_KEY) { try { const r = await pexelsSearch(env, q, page); if (r.length) return { source: "pexels", results: r }; } catch {} }
-  return { source: "openverse", results: await openverseSearch(env, q, page) };
+  return { source: "wikimedia", results: await wikimediaSearch(env, q, page) };
 }
 // Fetches the picked photo for the app (looked up again by id, so only real search results
 // can be fetched). The app shrinks and compresses it like any uploaded photo before saving,
@@ -938,16 +950,16 @@ async function fetchPickedPhoto(env, pick) {
     if (!r.ok) throw new Error("lookup");
     const x = await r.json();
     urls = [x.src.large, x.src.medium]; credit = "Photo by " + x.photographer + " on Pexels"; link = x.url;
-  } else if (kind === "ov") {
-    const r = await fetch((env.OPENVERSE_BASE || "https://api.openverse.org") + "/v1/images/" + id + "/", { headers: UA });
+  } else if (kind === "wm") {
+    const r = await fetch(wmBase(env) + "/w/api.php?action=query&format=json&formatversion=2&prop=imageinfo&iiprop=url|extmetadata|mime&iiurlwidth=1280&iiextmetadatafilter=Artist|LicenseShortName&pageids=" + id, { headers: WM_UA });
     if (!r.ok) throw new Error("lookup");
-    const x = await r.json();
-    urls = [x.url, x.thumbnail]; link = x.foreign_landing_url || "";
-    credit = [x.title ? "“" + x.title + "”" : "Photo", x.creator ? "by " + x.creator : "", x.license ? "(CC " + String(x.license).toUpperCase() + (x.license_version ? " " + x.license_version : "") + ")" : ""].filter(Boolean).join(" ");
+    const pg = (((await r.json()).query || {}).pages || [])[0] || {}, ii = (pg.imageinfo || [])[0];
+    if (!ii) throw new Error("lookup");
+    urls = [ii.thumburl, ii.url]; credit = wmCredit(ii); link = ii.descriptionurl || "";
   } else throw new Error("bad");
   for (const u of urls.filter(Boolean)) {
     try {
-      const res = await fetch(u, { headers: UA, redirect: "follow" });
+      const res = await fetch(u, { headers: WM_UA, redirect: "follow" });
       const mime = (res.headers.get("content-type") || "").split(";")[0].trim();
       if (!res.ok || !/^image\/(jpeg|png|webp|gif)$/.test(mime)) continue;
       if ((+res.headers.get("content-length") || 0) > 8_000_000) continue;     // huge original: use the smaller copy
