@@ -89,7 +89,18 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     if (mt && m === "DELETE") { db.recipes = db.recipes.filter(x => x.id !== mt[1]); return ok({ ok: true }); }
     if (p === "/api/import/text") { await wait(400); const r = parseRecipeText(body.text || ""); if (r.usable) return ok({ recipe: { ...r, source_url: body.source_url || "", source_name: "" }, method: "sorted" }); }
     if (p.startsWith("/api/import/")) { await wait(1200); return ok({ recipe: { title: "Example Imported Recipe", category: "Mains", prep_min: 10, cook_min: 20, servings: "4", ingredients: "1 lb pasta\n2 cups marinara sauce\n½ cup parmesan", steps: "Boil the pasta for 10 minutes.\nWarm the sauce and toss with the pasta.\nTop with parmesan.", notes: "In this preview every import returns this example.", tags: "", source_url: "", source_name: "preview" } }); }
-    if (p === "/api/photos") { const id = "p" + uid(); window.PREVIEW_PHOTOS[id] = "data:image/jpeg;base64," + body.data; return ok({ id }); }
+    if (p === "/api/photo-search") { const q = u.searchParams.get("q") || "food", pg = +(u.searchParams.get("page") || 1);
+      const hues = [12, 28, 45, 95, 140, 200, 330, 20, 60, 5, 170, 280];
+      const results = pg > 2 ? [] : hues.map((h, i) => { const n = (pg - 1) * 12 + i + 1; const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><defs><radialGradient id="g" cx="50%" cy="55%" r="60%"><stop offset="0" stop-color="hsl(${h},70%,62%)"/><stop offset="1" stop-color="hsl(${(h+30)%360},45%,28%)"/></radialGradient></defs><rect width="400" height="300" fill="hsl(${h},25%,88%)"/><ellipse cx="200" cy="160" rx="150" ry="110" fill="#fff" opacity=".9"/><ellipse cx="200" cy="160" rx="118" ry="84" fill="url(#g)"/><text x="200" y="285" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#333">${q.replace(/[<&]/g,"")} · example ${n}</text></svg>`;
+        return { id: "px:" + n, thumb: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg), credit: "Photo by Example Photographer " + n + " on Pexels", link: "https://www.pexels.com", alt: q + " example " + n }; });
+      window.PS_LAST = window.PS_LAST || {}; results.forEach(r => window.PS_LAST[r.id] = r);
+      return ok({ source: "pexels", results }); }
+    if (p === "/api/photo-search/image") { const r = (window.PS_LAST || {})[u.searchParams.get("id")]; const im = new Image(); im.src = r.thumb; await im.decode();
+      const c = document.createElement("canvas"); c.width = 1600; c.height = 1200; c.getContext("2d").drawImage(im, 0, 0, 1600, 1200);
+      const blob = await new Promise(ok => c.toBlob(ok, "image/png"));
+      window.PS_SIZES = window.PS_SIZES || []; window.PS_SIZES.push(blob.size);
+      return new Response(blob, { headers: { "content-type": "image/png", "x-credit": encodeURIComponent(r.credit), "x-credit-url": encodeURIComponent(r.link) } }); }
+    if (p === "/api/photos") { const id = "p" + uid(); window.PREVIEW_PHOTOS[id] = "data:image/jpeg;base64," + body.data; window.PS_SAVED = window.PS_SAVED || []; window.PS_SAVED.push(Math.round(body.data.length * 3 / 4)); return ok({ id }); }
     if (p === "/api/grocery" && m === "GET") return ok({ items: [...db.grocery].sort((a,b) => a.checked - b.checked || a.created - b.created), stores: db.stores });
     if (p === "/api/grocery" && m === "POST") { (body.items || []).forEach((t, i) => { db.grocery.push({ id: uid(), text: t, recipe_id: body.recipe_id || null, checked: 0, store: body.store || null, added_by: "u1", created: Date.now() + i }); }); return ok({ added: (body.items || []).length }); }
     if (p === "/api/grocery/bulk") { const ids = new Set(body.ids || []); if (body.remove) db.grocery = db.grocery.filter(g => !ids.has(g.id)); else db.grocery.forEach(g => { if (ids.has(g.id)) g.store = body.store || null; }); return ok({ changed: ids.size }); }

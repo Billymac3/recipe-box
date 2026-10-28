@@ -29,6 +29,8 @@ It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with o
 - **Secrets** (Worker → Settings → Variables and Secrets, never stored here):
   - `INVITE_CODE` lets someone join the first household.
   - `ADSENSE_CLIENT` and `ADSENSE_SLOT` are optional. They turn on the banner ad.
+  - `OWNER_EMAIL` is the only account that can see usage and use the owner tools. Nobody is made owner automatically.
+  - `PEXELS_API_KEY` is optional. It's a free key from pexels.com/api that improves Find a photo. Without it, photos come from Openverse.
   - `GEMINI_API_KEY` is optional. It's a free key from Google AI Studio that makes Gemini read recipes first, with Cloudflare's AI as the backup. `GEMINI_MODELS` (a comma-separated list) can override which Gemini models are tried, in order.
 - **No cron triggers.** Timer alerts use a Durable Object alarm that wakes only when a timer is due.
 - **The database updates itself.** Schema changes run on the first request after a deploy. They only add tables and columns and never delete data.
@@ -46,3 +48,6 @@ It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with o
 **Rollback:** Cloudflare dashboard → Worker → Deployments → Rollback.
 
 Your recipes live in the D1 database, not in this repository, so deploys never touch them.
+
+## License
+Copyright (c) 2026 Billy McIntyre. All rights reserved. This code is not open source. See [LICENSE](LICENSE).

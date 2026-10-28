@@ -8,7 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
-| [3.3](#33--not-live-yet) | not live yet | — | Google Gemini reads recipes first; Cloudflare AI becomes the backup |
+| [3.3](#33--not-live-yet) | not live yet | — | Gemini reads recipes first, in-app photo search, owner locked to one email |
 | [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
 | [3.1](#31--2026-10-27) | 2026-10-27 | [`59ad411`](https://github.com/Billymac3/recipe-box/commit/59ad411) | Stronger contrast, depth, clearer meal plan |
 | [3.0](#30--2026-10-26) | 2026-10-26 | [`1ef22ad`](https://github.com/Billymac3/recipe-box/commit/1ef22ad) | Separate households, lock-screen alerts, offline, usage meter, no-AI recipe sorter |
@@ -65,7 +65,39 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 - `GEMINI_MODELS` overrides the model order, comma-separated, so a retired model can be swapped without a code change.
 - `GEMINI_BASE` is only for testing against a stand-in server.
 
-**Fix:** on a brand-new install, the first account to sign up now becomes the app owner. Before, owner status was only assigned during the 3.0 upgrade. Existing installs are unaffected.
+### Find a photo (photo search)
+**What changed for people using the app**
+- A recipe's edit screen has a **Find a photo** button next to the upload button. It opens a full-screen search, filled in with the recipe's name, showing example photos in a 2-column grid with **Show more**.
+- Tap a photo to use it. Recipes with no photo also get a **Find a photo** button at the top of the recipe page, which adds the photo straight away.
+- The photographer's credit is shown on the recipe photo and links to the original.
+- Saved photos are kept small: resized to 1000 px on the longest side and saved as JPEG at 75% quality. That's about 100–200 KB for a typical food photo, so storage stays well within the free 5 GB.
+
+**Technical details**
+- Photo sources:
+  - **Pexels** when the `PEXELS_API_KEY` secret is set (free key; better food photos).
+  - **Openverse** otherwise (openly licensed photos, no key needed).
+  - If a Pexels search fails or finds nothing, Openverse is used.
+- The search footer credits Pexels or Openverse, as their terms ask.
+- New `GET /api/photo-search?q=&page=`. It returns 24 results a page, each with a thumbnail, credit, link and an id (`px:<id>` or `ov:<id>`).
+- New `GET /api/photo-search/image?id=`. The server looks the photo up again by id, so only real search results can be fetched. It downloads the image (skipping originals over 8 MB in favor of the smaller copy) and passes it to the app, with the credit in `x-credit` / `x-credit-url` headers.
+- The app shrinks and compresses the photo with the same `shrink()` step used for uploaded photos, then saves it through the existing `POST /api/photos`. Every saved photo lives in the app's own storage, so it keeps working if the original is taken down.
+- New recipe columns `image_credit` and `image_credit_url`. They're added automatically and cleared when you upload your own photo or remove the photo.
+- `PEXELS_BASE` / `OPENVERSE_BASE` are only for testing against stand-in servers.
+- **Preview fix:** recipe photos stored in the preview now show up. This didn't affect the live app.
+- **Tested:**
+  - Search and save work in the preview, in light and dark themes. The typed form is kept while searching, and the credit shows after saving.
+  - In a test, a 660 KB image was saved at 25–30 KB.
+  - Against stand-in Pexels and Openverse servers: correct source with and without a key, fallback to the smaller copy, made-up ids refused, and sign-in required.
+
+### Owner locked to one email
+- The app owner (usage meter, starter links, household list, Check Gemini) is now only the account whose email matches the new `OWNER_EMAIL` secret, compared without regard to capital letters. Anyone who isn't the owner is refused by the server, whatever the app shows.
+- Without `OWNER_EMAIL`, the owner flag already saved for the original install is used, so nothing changes until the secret is added.
+- No account ever becomes owner automatically:
+  - Removed the 3.0 "first account becomes owner" backfill step. The live database already ran it, so Billy is still owner.
+  - New sign-ups always start as regular members.
+- Tested: with no `OWNER_EMAIL`, a fresh copy has no owner. With it set, only that email can open usage.
+- Added `LICENSE` (all rights reserved) and a copyright line in the source and README.
+
 
 **Tested locally** against a stand-in Gemini server:
 - Recipes come back from the first model.
@@ -79,7 +111,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 `APP_VERSION` is now 3.3.
 
-**Files:** `src/server.js`, `src/app.html`, `src/privacy.html`, `build_preview.py`, `dist/worker.js`
+**Files:** `src/server.js`, `src/app.html`, `src/privacy.html`, `build_preview.py`, `dist/worker.js`, `LICENSE`, `README.md`
 
 ---
 

@@ -3,7 +3,10 @@
 // Workers AI (binding: AI). Each household's data is kept separate.
 // Secrets: INVITE_CODE (joins the first household), optional ADSENSE_CLIENT /
 // ADSENSE_SLOT (turn on the banner ad), optional GEMINI_API_KEY (Google's free AI,
-// tried before Workers AI) and GEMINI_MODELS (comma list to override the model order).
+// tried before Workers AI), GEMINI_MODELS (comma list to override the model order) and
+// PEXELS_API_KEY (better photo search; Openverse is used without it) and OWNER_EMAIL
+// (the only account that can see usage and run the admin tools).
+// Copyright (c) 2026 Billy McIntyre. All rights reserved. See LICENSE.
 // A Durable Object alarm (binding: TIMERS) wakes only when a cooking timer is due.
 import { DurableObject } from "cloudflare:workers";
 
@@ -49,7 +52,10 @@ const MIGRATIONS = [`ALTER TABLE grocery ADD COLUMN store TEXT`,
   `CREATE INDEX IF NOT EXISTS recipes_hh ON recipes (household_id)`,
   `CREATE INDEX IF NOT EXISTS grocery_hh ON grocery (household_id)`,
   `CREATE INDEX IF NOT EXISTS plan_hh ON plan (household_id, day)`,
-  `CREATE INDEX IF NOT EXISTS timers_due ON push_timers (fire_at)`];
+  `CREATE INDEX IF NOT EXISTS timers_due ON push_timers (fire_at)`,
+  // 3.3: credit for photos picked from the photo search
+  `ALTER TABLE recipes ADD COLUMN image_credit TEXT`,
+  `ALTER TABLE recipes ADD COLUMN image_credit_url TEXT`];
 // one-time move of everything from before 3.0 into the first household
 const BACKFILL = [
   `INSERT OR IGNORE INTO households (id, name, created) VALUES ('h1', 'Our household', strftime('%s','now') * 1000)`,
@@ -59,8 +65,6 @@ const BACKFILL = [
   `UPDATE plan SET household_id = 'h1' WHERE household_id IS NULL`,
   `UPDATE invites SET household_id = 'h1' WHERE household_id IS NULL`,
   `INSERT OR IGNORE INTO settings (key, value) SELECT 'stores:h1', value FROM settings WHERE key = 'stores'`,
-  // the first person to sign up runs the app
-  `UPDATE users SET is_admin = 1 WHERE id = (SELECT id FROM users ORDER BY created LIMIT 1) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)`,
   `INSERT OR REPLACE INTO settings (key, value) VALUES ('migrated:households', '1')`];
 // Cloudflare free plan daily limits (reset at midnight UTC) and storage cap
 const LIMITS = { requests: 100000, neurons: 10000, dbsize: 5e9 };
@@ -105,7 +109,15 @@ const SESSION_DAYS = 365;
 function sessionCookie(token, maxAge) {
   return `rb_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 }
+// The app owner (usage meter, starter links, household list) is only ever the account whose
+// email matches the OWNER_EMAIL secret. Without that secret, the owner flag saved for this
+// app's original install is used. Nobody becomes owner automatically.
 async function currentUser(req, env) {
+  const u = await loadUser(req, env);
+  if (u && env.OWNER_EMAIL) u.is_admin = String(u.email).toLowerCase() === String(env.OWNER_EMAIL).trim().toLowerCase() ? 1 : 0;
+  return u;
+}
+async function loadUser(req, env) {
   const auth = req.headers.get("authorization") || "";
   if (auth.startsWith("Bearer ")) {
     const key = auth.slice(7).trim();
@@ -361,7 +373,7 @@ async function importFromUrl(env, rawUrl) {
 }
 
 /* ---------------- recipes ---------------- */
-const RECIPE_FIELDS = ["title","category","prep_min","cook_min","servings","ingredients","steps","notes","tags","source_url","source_name","image_url","photo_id","favorite"];
+const RECIPE_FIELDS = ["title","category","prep_min","cook_min","servings","ingredients","steps","notes","tags","source_url","source_name","image_url","photo_id","image_credit","image_credit_url","favorite"];
 function sanitizeRecipe(b) {
   const r = {};
   for (const f of RECIPE_FIELDS) if (b[f] !== undefined) r[f] = b[f];
@@ -428,7 +440,7 @@ async function api(req, env, url) {
       writes.push(env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").bind("stores:" + hh, JSON.stringify(DEFAULT_STORES)));
       writes.push(env.DB.prepare("UPDATE starter_codes SET used_by = ? WHERE token_hash = ?").bind(id, starterHash));
     }
-    writes.push(env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created,household_id,is_admin) VALUES (?,?,?,?,?,?,?,?,(SELECT CASE WHEN EXISTS (SELECT 1 FROM users) THEN 0 ELSE 1 END))").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), now, hh));
+    writes.push(env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created,household_id,is_admin) VALUES (?,?,?,?,?,?,?,?,0)").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), now, hh));
     if (inviteHash) writes.push(env.DB.prepare("UPDATE invites SET used_by = ? WHERE token_hash = ?").bind(id, inviteHash));
     await env.DB.batch(writes);
     return startSession(env, id);
@@ -661,6 +673,16 @@ async function api(req, env, url) {
   }
 
   // photos
+  if (p === "/api/photo-search" && m === "GET") {
+    const q = String(url.searchParams.get("q") || "").trim().slice(0, 100), page = Math.min(10, Math.max(1, +url.searchParams.get("page") || 1));
+    if (!q) return json({ results: [] });
+    try { return json(await photoSearch(env, q, page)); }
+    catch { return json({ error: "Photo search isn't answering right now. Try again in a minute." }); }
+  }
+  if (p === "/api/photo-search/image" && m === "GET") {
+    try { return await fetchPickedPhoto(env, url.searchParams.get("id")); }
+    catch { return json({ error: "Couldn't get that photo. Try a different one." }, 502); }
+  }
   if (p === "/api/photos" && m === "POST") {
     const b = await body();
     const data = String(b.data || ""), mime = String(b.mime || "image/jpeg");
@@ -876,8 +898,66 @@ function imagePart(bytes) {
   const b = bytes, head = String.fromCharCode(...b.slice(4, 12));
   const mime = b[0] === 0x89 && b[1] === 0x50 ? "image/png" : b[0] === 0xff && b[1] === 0xd8 ? "image/jpeg"
     : String.fromCharCode(...b.slice(8, 12)) === "WEBP" ? "image/webp" : /ftyp(heic|heix|hevc|mif1|msf1|heif)/.test(head) ? "image/heic" : "image/jpeg";
-  let bin = ""; for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
-  return { inline_data: { mime_type: mime, data: btoa(bin) } };
+  return { inline_data: { mime_type: mime, data: toB64(b) } };
+}
+function toB64(b) { let bin = ""; for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000)); return btoa(bin); }
+
+/* ---------------- photo search ----------------
+   Finds example food photos for a recipe. Uses Pexels (better food photos) when the
+   PEXELS_API_KEY secret is set, otherwise Openverse (openly licensed photos, no key needed).
+   A picked photo is copied into the app's own photo storage so it never disappears. */
+const UA = { "user-agent": "RecipeBox/1.0 (family recipe app)" };
+async function pexelsSearch(env, q, page) {
+  const r = await fetch(`${env.PEXELS_BASE || "https://api.pexels.com"}/v1/search?query=${encodeURIComponent(q)}&per_page=24&page=${page}&orientation=landscape`, { headers: { authorization: env.PEXELS_API_KEY } });
+  if (!r.ok) throw new Error("pexels " + r.status);
+  const d = await r.json();
+  return (d.photos || []).map(x => ({ id: "px:" + x.id, thumb: x.src.medium, credit: "Photo by " + x.photographer + " on Pexels", link: x.url, alt: x.alt || "" }));
+}
+async function openverseSearch(env, q, page) {
+  const r = await fetch(`${env.OPENVERSE_BASE || "https://api.openverse.org"}/v1/images/?q=${encodeURIComponent(q)}&page_size=24&page=${page}&mature=false`, { headers: UA });
+  if (!r.ok) throw new Error("openverse " + r.status);
+  const d = await r.json();
+  return (d.results || []).filter(x => x.thumbnail).map(x => ({ id: "ov:" + x.id, thumb: x.thumbnail, alt: x.title || "",
+    credit: [x.title ? "“" + x.title + "”" : "Photo", x.creator ? "by " + x.creator : "", x.license ? "(CC " + String(x.license).toUpperCase() + (x.license_version ? " " + x.license_version : "") + ")" : ""].filter(Boolean).join(" "),
+    link: x.foreign_landing_url || "" }));
+}
+async function photoSearch(env, q, page) {
+  if (env.PEXELS_API_KEY) { try { const r = await pexelsSearch(env, q, page); if (r.length) return { source: "pexels", results: r }; } catch {} }
+  return { source: "openverse", results: await openverseSearch(env, q, page) };
+}
+// Fetches the picked photo for the app (looked up again by id, so only real search results
+// can be fetched). The app shrinks and compresses it like any uploaded photo before saving,
+// so every saved photo stays small (about 1000px wide, roughly 100–200 KB).
+async function fetchPickedPhoto(env, pick) {
+  let urls = [], credit = "", link = "";
+  const [kind, raw] = String(pick).split(":");
+  const id = String(raw || "").replace(/[^\w-]/g, "");
+  if (!id) throw new Error("bad");
+  if (kind === "px" && env.PEXELS_API_KEY) {
+    const r = await fetch((env.PEXELS_BASE || "https://api.pexels.com") + "/v1/photos/" + id, { headers: { authorization: env.PEXELS_API_KEY } });
+    if (!r.ok) throw new Error("lookup");
+    const x = await r.json();
+    urls = [x.src.large, x.src.medium]; credit = "Photo by " + x.photographer + " on Pexels"; link = x.url;
+  } else if (kind === "ov") {
+    const r = await fetch((env.OPENVERSE_BASE || "https://api.openverse.org") + "/v1/images/" + id + "/", { headers: UA });
+    if (!r.ok) throw new Error("lookup");
+    const x = await r.json();
+    urls = [x.url, x.thumbnail]; link = x.foreign_landing_url || "";
+    credit = [x.title ? "“" + x.title + "”" : "Photo", x.creator ? "by " + x.creator : "", x.license ? "(CC " + String(x.license).toUpperCase() + (x.license_version ? " " + x.license_version : "") + ")" : ""].filter(Boolean).join(" ");
+  } else throw new Error("bad");
+  for (const u of urls.filter(Boolean)) {
+    try {
+      const res = await fetch(u, { headers: UA, redirect: "follow" });
+      const mime = (res.headers.get("content-type") || "").split(";")[0].trim();
+      if (!res.ok || !/^image\/(jpeg|png|webp|gif)$/.test(mime)) continue;
+      if ((+res.headers.get("content-length") || 0) > 8_000_000) continue;     // huge original: use the smaller copy
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 8_000_000 || buf.byteLength < 500) continue;
+      return new Response(buf, { headers: { "content-type": mime, "cache-control": "private, no-store",
+        "x-credit": encodeURIComponent(credit.slice(0, 200)), "x-credit-url": encodeURIComponent(link) } });
+    } catch {}
+  }
+  throw new Error("download");
 }
 async function gemini(env, system, parts, wantJson) {
   const key = env.GEMINI_API_KEY;
