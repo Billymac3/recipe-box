@@ -8,7 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
-| [3.3](#33--not-live-yet) | not live yet | — | Gemini reads recipes first, in-app photo search, owner locked to one email |
+| [3.3](#33--2026-10-27) | 2026-10-27 | [`ae20270`](https://github.com/Billymac3/recipe-box/commit/ae20270) | Gemini reads recipes first, in-app photo search, owner locked to one email |
 | [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
 | [3.1](#31--2026-10-27) | 2026-10-27 | [`59ad411`](https://github.com/Billymac3/recipe-box/commit/59ad411) | Stronger contrast, depth, clearer meal plan |
 | [3.0](#30--2026-10-26) | 2026-10-26 | [`1ef22ad`](https://github.com/Billymac3/recipe-box/commit/1ef22ad) | Separate households, lock-screen alerts, offline, usage meter, no-AI recipe sorter |
@@ -19,7 +19,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 ---
 
-## 3.3 — not live yet
+## 3.3 — 2026-10-27
 
 **Why:** Cloudflare's free AI covers only about 30–65 AI recipe reads a day, shared by every household. Google's Gemini API has a much larger free allowance that's counted separately for each model. Using it first, and keeping Cloudflare as a backup, gives many more free imports, and the app keeps working if Google changes its terms.
 
