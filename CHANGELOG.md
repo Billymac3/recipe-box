@@ -8,7 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
-| [3.4](#34--not-live-yet) | not live yet | — | Find a photo uses Wikimedia Commons when there's no Pexels key |
+| [3.4](#34--2026-10-27) | 2026-10-27 | [`cab4bca`](https://github.com/Billymac3/recipe-box/commit/cab4bca) | Find a photo uses Wikimedia Commons when there's no Pexels key |
 | [3.3](#33--2026-10-27) | 2026-10-27 | [`ae20270`](https://github.com/Billymac3/recipe-box/commit/ae20270) | Gemini reads recipes first, in-app photo search, owner locked to one email |
 | [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
 | [3.1](#31--2026-10-27) | 2026-10-27 | [`59ad411`](https://github.com/Billymac3/recipe-box/commit/59ad411) | Stronger contrast, depth, clearer meal plan |
@@ -20,7 +20,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 ---
 
-## 3.4 — not live yet
+## 3.4 — 2026-10-27
 
 **Why:** Right after 3.3 went live, Find a photo said "Photo search isn't answering right now." There was no Pexels key yet, so the app was using Openverse. Openverse puts requests from server networks behind a Cloudflare challenge page, and app servers can't pass it. Other developers have reported the same thing ([WordPress/openverse#5625](https://github.com/WordPress/openverse/issues/5625)), with no fix so far. Every search from the app failed.
 
