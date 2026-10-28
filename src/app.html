@@ -331,24 +331,6 @@ ol.howto{padding-left:1.3em;margin:8px 0;display:grid;gap:6px}
 .pr-chips{display:flex;flex-wrap:wrap;gap:6px}
 .pr-photo{display:flex;align-items:center;gap:12px}
 .pr-photo img{width:64px;height:64px;object-fit:cover;border-radius:10px}
-.r-hero .credit{position:absolute;right:10px;bottom:8px;max-width:75%;font-size:.72rem;line-height:1.3;color:#fff;background:rgba(0,0,0,.55);padding:3px 8px;border-radius:8px;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.r-bar .findpic{margin-right:auto;margin-left:8px}
-.photo-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.photo-tools input[type=file]{flex:1 1 180px}
-.pick-credit{font-size:.8rem;color:var(--muted)}
-.psheet{position:fixed;inset:0;z-index:94;background:var(--bg);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
-.psheet[hidden]{display:none}
-.ps-top{display:flex;gap:8px;align-items:center;padding:12px max(16px,env(safe-area-inset-left,0px)) 10px;border-bottom:1.5px solid var(--line);background:var(--card);box-shadow:var(--shadow-sm)}
-.ps-top form{flex:1;display:flex;gap:8px}
-.ps-top input{flex:1;min-width:0}
-.ps-body{flex:1;overflow:auto;padding:14px max(16px,env(safe-area-inset-left,0px)) calc(env(safe-area-inset-bottom,0px) + 20px);-webkit-overflow-scrolling:touch}
-.ps-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
-.ps-grid button{padding:0;border:2px solid var(--edge);border-radius:14px;overflow:hidden;background:var(--accent-soft);aspect-ratio:4/3;cursor:pointer;box-shadow:var(--shadow-sm)}
-.ps-grid button:focus-visible{outline:3px solid var(--accent-ink);outline-offset:2px}
-.ps-grid img{width:100%;height:100%;object-fit:cover;display:block}
-.ps-foot{margin:14px 0 0;font-size:.82rem;color:var(--muted);text-align:center}
-.ps-foot a{color:var(--accent-ink)}
-.ps-msg{color:var(--muted);text-align:center;padding:30px 10px}
 .lightbox{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.86);display:grid;place-items:center;padding:calc(env(safe-area-inset-top,0px) + 56px) 16px calc(env(safe-area-inset-bottom,0px) + 24px)}
 .lightbox figure{margin:0;display:grid;gap:10px;justify-items:center;max-width:100%;max-height:100%}
 .lightbox img{max-width:100%;max-height:calc(100vh - 160px);border-radius:14px;object-fit:contain}
@@ -510,7 +492,7 @@ const S = {
   recipes: [], grocery: [], plan: [],
   tab: "recipes", view: "list", id: null, draft: null,
   q: "", cat: "All", favOnly: false,
-  scale: 1, servings: null, planPick: false, confirmDel: false, pendingPhoto: null, removePhoto: false, pickedPhoto: null,
+  scale: 1, servings: null, planPick: false, confirmDel: false, pendingPhoto: null, removePhoto: false,
   weekStart: mondayOf(new Date()), addingDay: null,
   stores: [], gStore: "All", gPick: null, gEdit: false, gSel: null, gRmConfirm: false,
   imp: { url: "", text: "", busy: "", msg: "", err: false, source_url: "" },
@@ -584,6 +566,9 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.6", items: [
+    "Find a photo has been removed. Add a recipe photo by uploading your own, as before. Photos already added with it stay on their recipes"
+  ] },
   { version: "3.5", items: [
     "Find a photo fixed: your phone now searches Wikimedia Commons directly, because Wikimedia turns away searches coming from the app's server"
   ] },
@@ -931,7 +916,6 @@ function renderList(){
 
 /* ---------- recipe detail ---------- */
 const ICON = {
-  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
@@ -966,7 +950,7 @@ function renderDetail(){
   const dayOpts = Array.from({length: 14}, (_, i) => { const d = addDays(today, i); return `<option value="${ymd(d)}">${i===0?"Today":i===1?"Tomorrow":d.toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"})}</option>`; }).join("");
   const bar = `<button class="iconbtn" data-act="back" aria-label="Back to recipes">${ICON.back}</button><button class="iconbtn" data-act="edit" aria-label="Edit recipe">${ICON.edit}</button>`;
   app.innerHTML = `
-    ${img ? `<div class="r-hero"><img src="${esc(img)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('noimg');this.remove()"><div class="bar">${bar}</div>${r.image_credit ? (r.image_credit_url ? `<a class="credit" href="${esc(r.image_credit_url)}" target="_blank" rel="noopener">${esc(r.image_credit)}</a>` : `<span class="credit">${esc(r.image_credit)}</span>`) : ""}</div>` : `<div class="r-bar">${bar.replace('<button class="iconbtn" data-act="edit"', '<button class="btn ghost findpic" data-act="psdetail">' + ICON.search + ' Find a photo</button><button class="iconbtn" data-act="edit"')}</div>`}
+    ${img ? `<div class="r-hero"><img src="${esc(img)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('noimg');this.remove()"><div class="bar">${bar}</div></div>` : `<div class="r-bar">${bar}</div>`}
     <div class="r-head">
       <div class="eyebrow">${esc(r.category || "Recipe")}${r.favorite ? " · ★ Favorite" : ""}</div>
       <h2>${esc(r.title)}</h2>
@@ -1277,7 +1261,7 @@ function renderImport(){
   document.getElementById("impImg").addEventListener("change", e => { const fs = [...e.target.files].slice(0, 6); if (fs.length) importImages(fs); });
 }
 function gotDraft(recipe, out){
-  S.draft = recipe; S.id = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.pickedPhoto = null; S.removePhoto = false;
+  S.draft = recipe; S.id = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.removePhoto = false;
   S.imp = { url: "", text: "", busy: "", msg: "", err: false, source_url: "" };
   render(); window.scrollTo(0,0);
   toast(out && out.aiLimit ? "Sorted without AI (today's AI is used up). Check it over, then Save." : out && out.method === "sorted" ? "Sorted without AI. Check it over, then Save." : "Check it over, then tap Save");
@@ -1313,21 +1297,6 @@ async function importText(){
     I.msg = out.aiLimit ? limitMsg(out) + " Or tap Type it in yourself." : out.error; I.err = true;
   } catch (e) { I.busy = ""; I.msg = e.message; I.err = true; }
   renderImport();
-}
-// a photo picked from the search: fetched through the server, shrunk and compressed, then saved like an upload
-async function savePickedPhoto(pick){
-  let res = null;
-  // Wikimedia photos load straight from Wikimedia; anything else (or if that fails) goes through the server
-  if (pick.full) { try { const r = await fetch(pick.full, { mode: "cors" }); if (r.ok) res = r; } catch {} }
-  if (!res) {
-    try { res = await fetch("/api/photo-search/image?id=" + encodeURIComponent(pick.id), { credentials: "same-origin" }); } catch { throw new Error("No connection. Check your internet and try again."); }
-    if (!res.ok) { let m = ""; try { m = (await res.json()).error; } catch {} throw new Error(m || "Couldn't get that photo. Try a different one."); }
-  }
-  const credit = decodeURIComponent(res.headers.get("x-credit") || ""), link = decodeURIComponent(res.headers.get("x-credit-url") || "");
-  const blob = await shrink(await res.blob(), 1000, 0.75);
-  const b64 = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(",")[1]); fr.onerror = no; fr.readAsDataURL(blob); });
-  const { id } = await api("/api/photos", { method: "POST", body: { data: b64, mime: "image/jpeg" } });
-  return { photo_id: id, image_credit: credit || pick.credit || "", image_credit_url: link || pick.link || "" };
 }
 async function shrink(file, max, quality){
   const bmp = await createImageBitmap(file);
@@ -1368,7 +1337,7 @@ function restoreForm(){ if (!formDraft) return; FIELDS.forEach(k => { const el =
 function renderEdit(){
   const existing = S.id ? (S.recipes.find(x => x.id === S.id) || {}) : {};
   const r = S.draft || existing;
-  const prev = S.pendingPhoto ? URL.createObjectURL(S.pendingPhoto) : S.pickedPhoto ? S.pickedPhoto.thumb : (!S.removePhoto ? imgFor(r) : "");
+  const prev = S.pendingPhoto ? URL.createObjectURL(S.pendingPhoto) : (!S.removePhoto ? imgFor(r) : "");
   app.innerHTML = `
     <div class="back-row"><button class="btn ghost" data-act="cancel">← Cancel</button></div>
     <form class="card" id="f"><div class="card-body form">
@@ -1385,14 +1354,14 @@ function renderEdit(){
       <div class="field"><label for="f-notes">Notes</label><textarea id="f-notes" style="min-height:80px">${esc(r.notes)}</textarea></div>
       <div class="field"><label for="f-tags">Tags</label><input id="f-tags" maxlength="200" value="${esc(r.tags)}" placeholder="weeknight, freezer-friendly"></div>
       <div class="field"><label for="f-source_url">Source link</label><input id="f-source_url" type="url" maxlength="1000" autocapitalize="off" value="${esc(r.source_url)}" placeholder="https://…"></div>
-      <div class="field"><label for="photo">Photo</label>${prev ? `<img class="photo-prev" src="${esc(prev)}" alt="" referrerpolicy="no-referrer">` : ""}${S.pickedPhoto ? `<span class="pick-credit">${esc(S.pickedPhoto.credit)}</span>` : ""}<div class="photo-tools"><button type="button" class="btn" data-act="psedit">${ICON.search} Find a photo</button><input id="photo" type="file" accept="image/*" aria-label="Upload your own photo"></div>${prev ? `<button type="button" class="btn ghost" data-act="rmphoto" style="justify-self:start">Remove photo</button>` : ""}</div>
+      <div class="field"><label for="photo">Photo</label>${prev ? `<img class="photo-prev" src="${esc(prev)}" alt="" referrerpolicy="no-referrer">` : ""}<input id="photo" type="file" accept="image/*">${prev ? `<button type="button" class="btn ghost" data-act="rmphoto" style="justify-self:start">Remove photo</button>` : ""}</div>
       ${S.id ? (S.confirmDel
         ? `<div class="confirm"><span>Delete “${esc(r.title)}” for both of you?</span><span class="btn-row"><button type="button" class="btn" data-act="nodel">Keep it</button><button type="button" class="btn danger" data-act="yesdel">Delete</button></span></div>`
         : `<button type="button" class="btn danger" data-act="del" style="justify-self:start">Delete recipe</button>`) : ""}
       <div class="actions"><button type="button" class="btn" data-act="cancel">Cancel</button><button type="submit" class="btn primary" id="saveBtn">Save recipe</button></div>
     </div></form>`;
   document.getElementById("f").addEventListener("submit", save);
-  document.getElementById("photo").addEventListener("change", e => { const f = e.target.files[0]; if (f) { snapshotForm(); S.pendingPhoto = f; S.pickedPhoto = null; S.removePhoto = false; renderEdit(); restoreForm(); } });
+  document.getElementById("photo").addEventListener("change", e => { const f = e.target.files[0]; if (f) { snapshotForm(); S.pendingPhoto = f; S.removePhoto = false; renderEdit(); restoreForm(); } });
 }
 async function save(e){
   e.preventDefault();
@@ -1406,22 +1375,17 @@ async function save(e){
   data.source_name = data.source_url ? sourceName : (base.source_url ? "" : sourceName);
   data.image_url = S.removePhoto ? "" : (base.image_url || "");
   data.photo_id = S.removePhoto ? "" : (base.photo_id || "");
-  if (S.removePhoto) { data.image_credit = ""; data.image_credit_url = ""; }
   try {
-    if (S.pickedPhoto) {
-      btn.textContent = "Saving photo…";
-      Object.assign(data, await savePickedPhoto(S.pickedPhoto)); data.image_url = "";
-    }
     if (S.pendingPhoto) {
       btn.textContent = "Uploading photo…";
       const blob = await shrink(S.pendingPhoto, 1200, 0.8);
       const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
       data.photo_id = (await api("/api/photos", { method: "POST", body: { data: b64, mime: "image/jpeg" } })).id;
-      data.image_url = ""; data.image_credit = ""; data.image_credit_url = "";
+      data.image_url = "";
     }
     const out = S.id ? await api("/api/recipes/" + S.id, { method: "PUT", body: data }) : await api("/api/recipes", { method: "POST", body: data });
     await loadRecipes();
-    S.id = out.recipe.id; S.view = "detail"; S.draft = null; S.pendingPhoto = null; S.pickedPhoto = null; S.removePhoto = false; S.scale = 1; S.planPick = false;
+    S.id = out.recipe.id; S.view = "detail"; S.draft = null; S.pendingPhoto = null; S.removePhoto = false; S.scale = 1; S.planPick = false;
     toast("Saved"); render(); window.scrollTo(0,0);
   } catch (err) { btn.disabled = false; btn.textContent = "Save recipe"; toast(err.message); }
 }
@@ -1755,75 +1719,6 @@ app.addEventListener("change", async e => {
   } catch (err) { toast(err.message || "Couldn't add that photo."); }
   S.gUploading = null; renderGrocery();
 });
-/* ---------- photo search ---------- */
-const psEl = document.createElement("div");
-psEl.className = "psheet"; psEl.hidden = true; psEl.setAttribute("role", "dialog"); psEl.setAttribute("aria-modal", "true"); psEl.setAttribute("aria-label", "Find a photo");
-document.body.appendChild(psEl);
-let PS = null;
-function openPhotoSearch(q, onPick){
-  PS = { q: q || "", results: [], page: 1, loading: false, done: false, source: "", error: "", onPick };
-  psEl.hidden = false; document.body.style.overflow = "hidden";
-  drawPS(); const inp = psEl.querySelector("input"); if (!PS.q) inp.focus(); else runPS(true);
-}
-function closePS(){ psEl.hidden = true; psEl.innerHTML = ""; PS = null; document.body.style.overflow = ""; }
-function drawPS(){
-  if (!PS) return;
-  const keep = psEl.querySelector(".ps-body"), top = keep ? keep.scrollTop : 0;
-  const grid = PS.results.map((x, i) => `<button type="button" data-pspick="${i}" aria-label="${esc(x.alt || "Photo " + (i + 1))}"><img src="${esc(x.thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"></button>`).join("");
-  const foot = PS.source === "pexels" ? `Photos provided by <a href="https://www.pexels.com" target="_blank" rel="noopener">Pexels</a>`
-    : PS.source === "wikimedia" ? `Openly licensed photos from <a href="https://commons.wikimedia.org" target="_blank" rel="noopener">Wikimedia Commons</a>. The photo's credit is saved with the recipe.` : "";
-  psEl.innerHTML = `<div class="ps-top"><button type="button" class="iconbtn" data-psx aria-label="Close">${ICON.close}</button>
-      <form data-psform><input class="inp" type="search" enterkeyhint="search" placeholder="Search photos, like “lasagna”" value="${esc(PS.q)}" aria-label="Search photos" autocomplete="off"><button class="btn primary">Search</button></form></div>
-    <div class="ps-body">
-      ${PS.error ? `<p class="ps-msg">${esc(PS.error)}</p>` : ""}
-      ${!PS.results.length && !PS.loading && !PS.error ? `<p class="ps-msg">${PS.done ? "No photos found. Try a simpler word, like the main ingredient." : "Search for a dish to see example photos."}</p>` : ""}
-      ${grid ? `<div class="ps-grid">${grid}</div>` : ""}
-      ${PS.loading ? `<p class="ps-msg"><span class="spinner"></span> Looking…</p>` : (PS.results.length && !PS.done ? `<div class="btn-row" style="justify-content:center;margin-top:14px"><button type="button" class="btn" data-psmore>Show more</button></div>` : "")}
-      ${foot ? `<p class="ps-foot">${foot}</p>` : ""}
-    </div>`;
-  psEl.querySelector(".ps-body").scrollTop = top;
-}
-// Wikimedia Commons, searched straight from the phone (it turns away many requests from cloud servers)
-const WM_API = "https://commons.wikimedia.org/w/api.php?origin=*&action=query&format=json&formatversion=2";
-const htmlText = s => { const d = document.createElement("div"); d.innerHTML = String(s || ""); return (d.textContent || "").replace(/\s+/g, " ").trim(); };
-async function wmSearch(q, page){
-  const u = WM_API + "&generator=search&gsrnamespace=6&gsrlimit=24&gsroffset=" + (page - 1) * 24 + "&gsrsearch=" + encodeURIComponent(q + " filetype:bitmap")
-    + "&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=500&iiextmetadatafilter=Artist|LicenseShortName";
-  let r; try { r = await fetch(u); } catch { throw new Error("No connection to the photo library. Check your internet and try again."); }
-  if (!r.ok) throw new Error("The photo library said no (" + r.status + "). Try again in a minute.");
-  const d = await r.json();
-  return ((d.query && d.query.pages) || []).sort((x, y) => (x.index || 0) - (y.index || 0)).map(pg => {
-    const ii = (pg.imageinfo || [])[0];
-    if (!ii || !ii.thumburl || !/^image\/(jpeg|png|webp)$/.test(ii.mime || "")) return null;
-    const md = ii.extmetadata || {}, who = htmlText(md.Artist && md.Artist.value).slice(0, 80), lic = htmlText(md.LicenseShortName && md.LicenseShortName.value);
-    // a 1280px copy to save (or the original if it's smaller than that)
-    const full = (ii.width || 0) > 1280 && /\/500px-/.test(ii.thumburl) ? ii.thumburl.replace("/500px-", "/1280px-") : ii.url;
-    return { id: "wm:" + pg.pageid, thumb: ii.thumburl, full, link: ii.descriptionurl || "", alt: String(pg.title || "").replace(/^File:|\.\w+$/g, ""),
-      credit: ["Photo", who ? "by " + who : "", "via Wikimedia Commons", lic ? "(" + lic + ")" : ""].filter(Boolean).join(" ") };
-  }).filter(Boolean);
-}
-async function runPS(fresh){
-  if (!PS || !PS.q.trim()) return;
-  if (fresh) { PS.results = []; PS.page = 1; PS.done = false; }
-  PS.loading = true; PS.error = ""; drawPS();
-  try {
-    let r = await api("/api/photo-search?q=" + encodeURIComponent(PS.q.trim()) + "&page=" + PS.page).catch(e => ({ error: e.message }));
-    if (r.useClient || r.error) { try { r = { source: "wikimedia", results: await wmSearch(PS.q.trim(), PS.page) }; } catch (e) { r = { error: e.message }; } }
-    if (!PS) return;
-    if (r.error) PS.error = r.error;
-    else { PS.source = r.source; PS.results = PS.results.concat(r.results || []); if (!(r.results || []).length || r.results.length < 12) PS.done = true; }
-  } catch (e) { if (PS) PS.error = e.message || "Photo search isn't answering right now."; }
-  if (PS) { PS.loading = false; drawPS(); }
-}
-psEl.addEventListener("submit", e => { e.preventDefault(); if (!PS) return; PS.q = psEl.querySelector("input").value; psEl.querySelector("input").blur(); runPS(true); });
-psEl.addEventListener("click", e => {
-  if (e.target.closest("[data-psx]")) return closePS();
-  if (e.target.closest("[data-psmore]")) { PS.page++; return runPS(false); }
-  const b = e.target.closest("[data-pspick]"); if (!b || !PS) return;
-  const pick = PS.results[+b.dataset.pspick], cb = PS.onPick; closePS(); if (pick && cb) cb(pick);
-});
-document.addEventListener("keydown", e => { if (e.key === "Escape" && PS) closePS(); });
-
 const photoEl = document.createElement("div");
 photoEl.className = "lightbox"; photoEl.hidden = true; photoEl.setAttribute("role", "dialog"); photoEl.setAttribute("aria-modal", "true");
 document.body.appendChild(photoEl);
@@ -1878,7 +1773,7 @@ function longPress(key){
       { label: "Add ingredients to groceries", fn: () => addIngredientsToGrocery(r) },
       { label: "Add to meal plan…", keep: true, fn: () => openSheet("Add to meal plan", r.title, dayChoices(new Date(), 14).map(c => ({ label: c.label, fn: async () => { await api("/api/plan", { method: "POST", body: { day: c.day, recipe_id: r.id } }); toast("Added to " + c.label); } }))) },
       { label: r.favorite ? "Remove from favorites" : "Add to favorites", fn: async () => { r.favorite = r.favorite ? 0 : 1; render(); await api("/api/recipes/" + r.id, { method: "PUT", body: { favorite: r.favorite } }); } },
-      { label: "Edit recipe", fn: () => { S.tab = "recipes"; S.id = r.id; S.draft = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.pickedPhoto = null; S.removePhoto = false; render(); window.scrollTo(0,0); } },
+      { label: "Edit recipe", fn: () => { S.tab = "recipes"; S.id = r.id; S.draft = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.removePhoto = false; render(); window.scrollTo(0,0); } },
       { label: "Delete recipe", danger: true, confirm: "Tap again to delete for both of you", fn: async () => { await api("/api/recipes/" + r.id, { method: "DELETE" }); await loadRecipes(); render(); toast("Recipe deleted"); } }
     ]); return;
   }
@@ -1972,9 +1867,9 @@ app.addEventListener("click", async e => {
     if (a === "back") { S.view = "list"; S.id = null; S.draft = null; render(); }
     else if (a === "new") openNew();
     else if (a === "clear") { S.q = ""; S.cat = "All"; S.favOnly = false; renderList(); }
-    else if (a === "edit") { S.iSel = null; S.draft = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.pickedPhoto = null; S.removePhoto = false; render(); window.scrollTo(0,0); }
-    else if (a === "cancel") { S.view = S.id ? "detail" : "list"; S.draft = null; S.pendingPhoto = null; S.pickedPhoto = null; S.removePhoto = false; render(); }
-    else if (a === "manual") { S.draft = { source_url: S.imp.url.trim() || S.imp.source_url || "" }; S.id = null; S.view = "edit"; S.pendingPhoto = null; S.pickedPhoto = null; S.removePhoto = false; render(); window.scrollTo(0,0); }
+    else if (a === "edit") { S.iSel = null; S.draft = null; S.view = "edit"; S.confirmDel = false; S.pendingPhoto = null; S.removePhoto = false; render(); window.scrollTo(0,0); }
+    else if (a === "cancel") { S.view = S.id ? "detail" : "list"; S.draft = null; S.pendingPhoto = null; S.removePhoto = false; render(); }
+    else if (a === "manual") { S.draft = { source_url: S.imp.url.trim() || S.imp.source_url || "" }; S.id = null; S.view = "edit"; S.pendingPhoto = null; S.removePhoto = false; render(); window.scrollTo(0,0); }
     else if (a === "startcook") openCook();
     else if (a === "sound") { try { localStorage.setItem("rb-sound", d.sound); } catch {} t.closest(".sounds").querySelectorAll("[data-sound]").forEach(b => b.setAttribute("aria-checked", b.dataset.sound === d.sound)); playSound(d.sound); }
     else if (a === "stopsound") stopAlarm();
@@ -2052,22 +1947,7 @@ app.addEventListener("click", async e => {
     else if (a === "pasteurl") { try { S.imp.url = (await navigator.clipboard.readText()).trim(); renderImport(); } catch { document.getElementById("impUrl").focus(); toast("Long-press the box and tap Paste."); } }
     else if (a === "impurl") importUrl();
     else if (a === "imptext") importText();
-    else if (a === "psedit") {
-      snapshotForm();
-      openPhotoSearch((document.getElementById("f-title") || {}).value || "", pick => { S.pickedPhoto = pick; S.pendingPhoto = null; S.removePhoto = false; renderEdit(); restoreForm(); });
-    }
-    else if (a === "psdetail") {
-      const rid = S.id, rec = S.recipes.find(x => x.id === rid);
-      openPhotoSearch(rec ? rec.title : "", async pick => {
-        toast("Saving photo…");
-        try {
-          const ph = await savePickedPhoto(pick);
-          await api("/api/recipes/" + rid, { method: "PUT", body: { ...ph, image_url: "" } });
-          await loadRecipes(); toast("Photo added"); if (S.id === rid && S.view === "detail") { render(); window.scrollTo(0, 0); }
-        } catch (err) { toast(err.message || "Couldn't save that photo."); }
-      });
-    }
-    else if (a === "rmphoto") { snapshotForm(); S.pendingPhoto = null; S.pickedPhoto = null; S.removePhoto = true; renderEdit(); restoreForm(); }
+    else if (a === "rmphoto") { snapshotForm(); S.pendingPhoto = null; S.removePhoto = true; renderEdit(); restoreForm(); }
     else if (a === "del") { snapshotForm(); S.confirmDel = true; renderEdit(); restoreForm(); }
     else if (a === "nodel") { snapshotForm(); S.confirmDel = false; renderEdit(); restoreForm(); }
     else if (a === "yesdel") { await api("/api/recipes/" + S.id, { method: "DELETE" }); await loadRecipes(); S.view = "list"; S.id = null; toast("Recipe deleted"); render(); }

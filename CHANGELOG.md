@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [3.6](#36--2026-10-27) | 2026-10-27 | see below | Find a photo removed |
 | [3.5](#35--2026-10-27) | 2026-10-27 | [`7f218e9`](https://github.com/Billymac3/recipe-box/commit/7f218e9) | Find a photo searches Wikimedia from the phone |
 | [3.4](#34--2026-10-27) | 2026-10-27 | [`cab4bca`](https://github.com/Billymac3/recipe-box/commit/cab4bca) | Find a photo uses Wikimedia Commons when there's no Pexels key |
 | [3.3](#33--2026-10-27) | 2026-10-27 | [`ae20270`](https://github.com/Billymac3/recipe-box/commit/ae20270) | Gemini reads recipes first, in-app photo search, owner locked to one email |
@@ -18,6 +19,29 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 3.6 — 2026-10-27
+
+**Why:** Find a photo still didn't work reliably after two fixes (3.4, 3.5), and Billy decided to remove it.
+
+### What changed for people using the app
+- Find a photo is gone: the button on the edit screen, the button at the top of recipes without a photo, and the search screen.
+- Adding a photo works as before: upload your own from the edit screen.
+- Any photo already added with Find a photo stays on its recipe. The credit line on those photos is no longer shown.
+
+### Technical details
+- Removed the `/api/photo-search` and `/api/photo-search/image` routes, the Pexels and Wikimedia code, the phone-side Wikimedia search, the search screen and its styles, and the preview's stand-in photo search.
+- `src/app.html` and `build_preview.py` were restored from the 3.3 Gemini commit (`51444b8`), then re-applied:
+  - the in-app "What's new" entries for 3.3–3.6
+  - the preview fix that shows stored recipe photos (`imgFor` uses `photoUrl`)
+- Kept: the `image_credit` and `image_credit_url` columns, which stay in the database (columns are never dropped) and are simply unused. Also kept: the owner lock (`OWNER_EMAIL`), Gemini, and the LICENSE.
+- The `PEXELS_API_KEY` secret is no longer used. Don't add it. If it was added, it can be deleted from Cloudflare.
+- Tested in the preview: uploading your own photo still saves and shows it, no Find a photo buttons remain, the Gemini usage card still works, and there are no page errors.
+- `APP_VERSION` is now 3.6.
+
+**Files:** `src/server.js`, `src/app.html`, `build_preview.py`, `dist/worker.js`, `README.md`
 
 ---
 
