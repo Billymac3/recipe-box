@@ -584,6 +584,9 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.5", items: [
+    "Find a photo fixed: your phone now searches Wikimedia Commons directly, because Wikimedia turns away searches coming from the app's server"
+  ] },
   { version: "3.4", items: [
     "Find a photo works again: without a Pexels key, photos now come from Wikimedia Commons, because the previous free photo source blocks requests from app servers"
   ] },
@@ -1313,9 +1316,13 @@ async function importText(){
 }
 // a photo picked from the search: fetched through the server, shrunk and compressed, then saved like an upload
 async function savePickedPhoto(pick){
-  let res;
-  try { res = await fetch("/api/photo-search/image?id=" + encodeURIComponent(pick.id), { credentials: "same-origin" }); } catch { throw new Error("No connection. Check your internet and try again."); }
-  if (!res.ok) { let m = ""; try { m = (await res.json()).error; } catch {} throw new Error(m || "Couldn't get that photo. Try a different one."); }
+  let res = null;
+  // Wikimedia photos load straight from Wikimedia; anything else (or if that fails) goes through the server
+  if (pick.full) { try { const r = await fetch(pick.full, { mode: "cors" }); if (r.ok) res = r; } catch {} }
+  if (!res) {
+    try { res = await fetch("/api/photo-search/image?id=" + encodeURIComponent(pick.id), { credentials: "same-origin" }); } catch { throw new Error("No connection. Check your internet and try again."); }
+    if (!res.ok) { let m = ""; try { m = (await res.json()).error; } catch {} throw new Error(m || "Couldn't get that photo. Try a different one."); }
+  }
   const credit = decodeURIComponent(res.headers.get("x-credit") || ""), link = decodeURIComponent(res.headers.get("x-credit-url") || "");
   const blob = await shrink(await res.blob(), 1000, 0.75);
   const b64 = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(",")[1]); fr.onerror = no; fr.readAsDataURL(blob); });
@@ -1776,12 +1783,32 @@ function drawPS(){
     </div>`;
   psEl.querySelector(".ps-body").scrollTop = top;
 }
+// Wikimedia Commons, searched straight from the phone (it turns away many requests from cloud servers)
+const WM_API = "https://commons.wikimedia.org/w/api.php?origin=*&action=query&format=json&formatversion=2";
+const htmlText = s => { const d = document.createElement("div"); d.innerHTML = String(s || ""); return (d.textContent || "").replace(/\s+/g, " ").trim(); };
+async function wmSearch(q, page){
+  const u = WM_API + "&generator=search&gsrnamespace=6&gsrlimit=24&gsroffset=" + (page - 1) * 24 + "&gsrsearch=" + encodeURIComponent(q + " filetype:bitmap")
+    + "&prop=imageinfo&iiprop=url|size|mime|extmetadata&iiurlwidth=500&iiextmetadatafilter=Artist|LicenseShortName";
+  let r; try { r = await fetch(u); } catch { throw new Error("No connection to the photo library. Check your internet and try again."); }
+  if (!r.ok) throw new Error("The photo library said no (" + r.status + "). Try again in a minute.");
+  const d = await r.json();
+  return ((d.query && d.query.pages) || []).sort((x, y) => (x.index || 0) - (y.index || 0)).map(pg => {
+    const ii = (pg.imageinfo || [])[0];
+    if (!ii || !ii.thumburl || !/^image\/(jpeg|png|webp)$/.test(ii.mime || "")) return null;
+    const md = ii.extmetadata || {}, who = htmlText(md.Artist && md.Artist.value).slice(0, 80), lic = htmlText(md.LicenseShortName && md.LicenseShortName.value);
+    // a 1280px copy to save (or the original if it's smaller than that)
+    const full = (ii.width || 0) > 1280 && /\/500px-/.test(ii.thumburl) ? ii.thumburl.replace("/500px-", "/1280px-") : ii.url;
+    return { id: "wm:" + pg.pageid, thumb: ii.thumburl, full, link: ii.descriptionurl || "", alt: String(pg.title || "").replace(/^File:|\.\w+$/g, ""),
+      credit: ["Photo", who ? "by " + who : "", "via Wikimedia Commons", lic ? "(" + lic + ")" : ""].filter(Boolean).join(" ") };
+  }).filter(Boolean);
+}
 async function runPS(fresh){
   if (!PS || !PS.q.trim()) return;
   if (fresh) { PS.results = []; PS.page = 1; PS.done = false; }
   PS.loading = true; PS.error = ""; drawPS();
   try {
-    const r = await api("/api/photo-search?q=" + encodeURIComponent(PS.q.trim()) + "&page=" + PS.page);
+    let r = await api("/api/photo-search?q=" + encodeURIComponent(PS.q.trim()) + "&page=" + PS.page).catch(e => ({ error: e.message }));
+    if (r.useClient || r.error) { try { r = { source: "wikimedia", results: await wmSearch(PS.q.trim(), PS.page) }; } catch (e) { r = { error: e.message }; } }
     if (!PS) return;
     if (r.error) PS.error = r.error;
     else { PS.source = r.source; PS.results = PS.results.concat(r.results || []); if (!(r.results || []).length || r.results.length < 12) PS.done = true; }

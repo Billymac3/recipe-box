@@ -17,7 +17,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "3.4";
+const APP_VERSION = "3.5";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -677,11 +677,11 @@ async function api(req, env, url) {
     const q = String(url.searchParams.get("q") || "").trim().slice(0, 100), page = Math.min(10, Math.max(1, +url.searchParams.get("page") || 1));
     if (!q) return json({ results: [] });
     try { return json(await photoSearch(env, q, page)); }
-    catch (e) { console.log("photo search failed", e && e.message); return json({ error: "Photo search isn't answering right now. Try again in a minute." }); }
+    catch (e) { console.log("photo search failed", e && e.message); return json({ error: "Photo search isn't answering right now. Try again in a minute.", detail: String(e && e.message || "") }); }
   }
   if (p === "/api/photo-search/image" && m === "GET") {
     try { return await fetchPickedPhoto(env, url.searchParams.get("id")); }
-    catch { return json({ error: "Couldn't get that photo. Try a different one." }, 502); }
+    catch (e) { console.log("photo fetch failed", e && e.message); return json({ error: "Couldn't get that photo. Try a different one.", detail: String(e && e.message || "") }, 502); }
   }
   if (p === "/api/photos" && m === "POST") {
     const b = await body();
@@ -921,21 +921,10 @@ function wmCredit(ii) {
   const md = ii.extmetadata || {}, who = stripTags(md.Artist && md.Artist.value).slice(0, 80), lic = stripTags(md.LicenseShortName && md.LicenseShortName.value);
   return ["Photo", who ? "by " + who : "", "via Wikimedia Commons", lic ? "(" + lic + ")" : ""].filter(Boolean).join(" ");
 }
-async function wikimediaSearch(env, q, page) {
-  const u = wmBase(env) + "/w/api.php?action=query&format=json&formatversion=2&generator=search&gsrnamespace=6&gsrlimit=24"
-    + "&gsroffset=" + (page - 1) * 24 + "&gsrsearch=" + encodeURIComponent(q + " filetype:bitmap")
-    + "&prop=imageinfo&iiprop=url|extmetadata|mime&iiurlwidth=500&iiextmetadatafilter=Artist|LicenseShortName";
-  const r = await fetch(u, { headers: WM_UA });
-  if (!r.ok) throw new Error("wikimedia " + r.status);
-  const d = await r.json();
-  return ((d.query && d.query.pages) || []).sort((x, y) => (x.index || 0) - (y.index || 0))
-    .map(pg => ({ pg, ii: (pg.imageinfo || [])[0] }))
-    .filter(({ ii }) => ii && ii.thumburl && /^image\/(jpeg|png|webp)$/.test(ii.mime || "image/jpeg"))
-    .map(({ pg, ii }) => ({ id: "wm:" + pg.pageid, thumb: ii.thumburl, credit: wmCredit(ii), link: ii.descriptionurl || "", alt: String(pg.title || "").replace(/^File:|\.\w+$/g, "") }));
-}
 async function photoSearch(env, q, page) {
-  if (env.PEXELS_API_KEY) { try { const r = await pexelsSearch(env, q, page); if (r.length) return { source: "pexels", results: r }; } catch {} }
-  return { source: "wikimedia", results: await wikimediaSearch(env, q, page) };
+  if (env.PEXELS_API_KEY) { try { const r = await pexelsSearch(env, q, page); if (r.length) return { source: "pexels", results: r }; } catch (e) { console.log("pexels search failed", e && e.message); } }
+  // Wikimedia refuses many requests from cloud servers, so the phone searches it directly
+  return { useClient: true };
 }
 // Fetches the picked photo for the app (looked up again by id, so only real search results
 // can be fetched). The app shrinks and compresses it like any uploaded photo before saving,

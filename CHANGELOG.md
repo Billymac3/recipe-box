@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [3.5](#35--not-live-yet) | not live yet | — | Find a photo searches Wikimedia from the phone |
 | [3.4](#34--2026-10-27) | 2026-10-27 | [`cab4bca`](https://github.com/Billymac3/recipe-box/commit/cab4bca) | Find a photo uses Wikimedia Commons when there's no Pexels key |
 | [3.3](#33--2026-10-27) | 2026-10-27 | [`ae20270`](https://github.com/Billymac3/recipe-box/commit/ae20270) | Gemini reads recipes first, in-app photo search, owner locked to one email |
 | [3.2](#32--2026-10-27) | 2026-10-27 | [`c8c01a3`](https://github.com/Billymac3/recipe-box/commit/c8c01a3) | Timer alerts wake on demand; usage meter relabeled |
@@ -17,6 +18,36 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 3.5 — not live yet
+
+**Why:** After 3.4, Find a photo still said "Photo search isn't answering right now." Wikimedia, like Openverse, turns away many requests that come from cloud servers such as Cloudflare Workers. Every search the app's server sent was refused before it reached the photo library.
+
+### What changed for people using the app
+- Find a photo works without any key. Your phone now searches Wikimedia Commons directly, the way a web browser would.
+- If the photo library refuses a search, the message now includes its reply code, which makes problems easier to track down.
+
+### Technical details
+- `GET /api/photo-search`:
+  - With a working `PEXELS_API_KEY`, it still searches Pexels on the server (the key must stay secret).
+  - Otherwise it returns `{ useClient: true }`, and the app calls the MediaWiki API itself (`origin=*` for anonymous cross-site access).
+  - If the server search errors, the app also falls back to searching Wikimedia itself.
+- New in the app:
+  - `wmSearch()`: rank order, photos only (JPEG, PNG or WebP), 500 px thumbnails, credit from the author and license with HTML stripped.
+  - A `full` URL for saving: Wikimedia's 1280 px copy, or the original when it's 1280 px or smaller.
+- Saving a Wikimedia photo downloads it straight from `upload.wikimedia.org`, then shrinks and compresses it in the app as before. If that download fails, it goes through `/api/photo-search/image` instead.
+- Removed the server-side Wikimedia search added in 3.4. The server keeps the Wikimedia image lookup as a fallback for saving.
+- Photo search and photo download errors now go to the Worker log, and their JSON errors include a `detail` field.
+- Tested in a headless browser with stand-in Wikimedia replies:
+  - Results are ranked and non-photos are dropped.
+  - The 1280 px copy is used for large photos and the original for small ones.
+  - A 47 KB source image was saved at about 5 KB.
+  - Credits are cleaned up, and a 403 shows a clear message.
+- `APP_VERSION` is now 3.5.
+
+**Files:** `src/server.js`, `src/app.html`, `build_preview.py`, `dist/worker.js`
 
 ---
 
