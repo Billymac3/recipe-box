@@ -19,9 +19,18 @@ binding = "AI"
 name = "TIMERS"
 class_name = "TimerClock"
 
+# Live updates: one per household, holds the open phones' connections.
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "HouseholdHub"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TimerClock"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["HouseholdHub"]
 
 # No scheduled wake-ups (this removes the old every-minute check).
 [triggers]

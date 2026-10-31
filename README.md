@@ -14,7 +14,7 @@ It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with o
 ## How it's built
 | File | What it is |
 |---|---|
-| `src/server.js` | The Worker: API, accounts and households, recipe import, push alerts, usage meter, `TimerClock` alarm |
+| `src/server.js` | The Worker: API, accounts and households, recipe import, push alerts, usage meter, `TimerClock` alarm, `HouseholdHub` live updates |
 | `src/app.html` | The whole phone app (one page), including the in-app "What's new" list (`CHANGELOG`) |
 | `src/parse.js` | Recipe sorter that needs no AI, shared by the server and the app |
 | `src/sw.js` | Service worker: offline copies of the app and data, and lock-screen notifications |
@@ -22,10 +22,10 @@ It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with o
 | `themes.py` | Color palettes (light and dark), font styles, and contrast tuning |
 | `build.py` | Bundles everything into `dist/worker.js` (what Cloudflare runs) |
 | `build_preview.py` | A stand-alone preview with example data (`dist/preview.html`, not committed) |
-| `wrangler.toml` | Cloudflare settings: D1 database, AI, the `TIMERS` Durable Object |
+| `wrangler.toml` | Cloudflare settings: D1 database, AI, the `TIMERS` and `HUB` Durable Objects |
 
 ## Cloudflare settings
-- **Bindings:** `DB` (D1 database `recipe-box`), `AI` (Workers AI), `TIMERS` (Durable Object `TimerClock`).
+- **Bindings:** `DB` (D1 database `recipe-box`), `AI` (Workers AI), `TIMERS` (Durable Object `TimerClock`), `HUB` (Durable Object `HouseholdHub`, live updates between a household's phones).
 - **Secrets** (Worker → Settings → Variables and Secrets, never stored here):
   - `INVITE_CODE` lets someone join the first household.
   - `ADSENSE_CLIENT` and `ADSENSE_SLOT` are optional. They turn on the banner ad.

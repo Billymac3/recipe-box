@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [3.7](#37--not-live-yet) | not live yet | — | Live updates between phones, with last-updated line |
 | [3.6](#36--2026-10-27) | 2026-10-27 | [`1ffd335`](https://github.com/Billymac3/recipe-box/commit/1ffd335) | Find a photo removed |
 | [3.5](#35--2026-10-27) | 2026-10-27 | [`7f218e9`](https://github.com/Billymac3/recipe-box/commit/7f218e9) | Find a photo searches Wikimedia from the phone |
 | [3.4](#34--2026-10-27) | 2026-10-27 | [`cab4bca`](https://github.com/Billymac3/recipe-box/commit/cab4bca) | Find a photo uses Wikimedia Commons when there's no Pexels key |
@@ -19,6 +20,54 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 3.7 — not live yet
+
+**Why:** If one person added to the grocery list, the other had to close and reopen the app to see it. Billy asked for updates to show up only when someone actually makes a change (not by checking every few seconds), without using up free-plan requests, and for a line showing when the list was last refreshed.
+
+### What changed for people using the app
+- Changes made by anyone in the household now appear on every open phone right away. That covers adding, ticking, editing or removing grocery items, changing stores, the meal plan, and recipes.
+- On Groceries, a short "Jackie updated the list" note pops up.
+- Groceries, Meal Plan and Recipes show **Updated just now / 5 min ago / 11:04 AM** under the title. A green dot means live updates are connected. Tap the line to refresh by hand.
+- Nothing you're in the middle of gets interrupted. If you're typing, have a menu open, or are adding a meal, the update waits. Meanwhile the line says "New changes", and the screen refreshes as soon as you finish.
+- When you come back to the app after it was in the background, it checks once and catches up on anything you missed.
+
+### How much it uses (free plan)
+- **No checking on a timer.** While the app is open, each phone keeps one connection open, and the server only sends something down it when a change is made.
+- **Opening the app or coming back to it:** 2 requests (the connection plus one catch-up check).
+- **Each change someone makes:** the person making it uses their 1 request as before. Each other open phone uses 1 request to reload just the list that changed.
+- **Sitting idle:** 0 server requests. A small keep-alive signal goes over the open connection once a minute, so it isn't dropped. It's answered without waking the server and isn't counted as a server request.
+- **When the app is closed or in the background:** the connection closes, so nothing at all is used.
+
+### Technical details
+- **New Durable Object `HouseholdHub`** (binding `HUB`, migration `v2`, SQLite-backed):
+  - There's one per household (`idFromName(household)`).
+  - It accepts each open phone's WebSocket using the hibernation API (`ctx.acceptWebSocket`), so it sleeps while connections sit idle.
+  - `setWebSocketAutoResponse("ping" → "pong")` answers the keep-alive without waking it.
+  - `notify()` sends `{ kinds, by, from, at }` to every connection in that household.
+- **`GET /api/live`** (signed in, WebSocket upgrade) connects a phone to its household's hub. Households never see each other's updates.
+- **After every successful change** to `/api/grocery*`, `/api/stores`, `/api/plan*`, `/api/recipes*`, `/api/import/backup` or `/api/quicksave`, the Worker:
+  - saves a change time per list in `settings` (`rev:g|p|r:<household>`)
+  - tells the hub
+  
+  Deleting a recipe marks both recipes and the meal plan as changed.
+- **`GET /api/changes`** returns those change times, so a phone coming back from the background reloads only what changed.
+- **In the app:**
+  - Every request carries `x-rb-client` (a random id per open app), so a phone ignores the echo of its own changes.
+  - It reconnects with increasing waits (2 s to 60 s) if the connection drops while the app is open, and disconnects when the app goes to the background.
+  - `liveRender()` holds off redrawing while an input, menu, photo or meal-adding panel is in use, keeps your scroll position, and drops edit-mode selections whose items were removed by someone else.
+- **Tested end to end** on a local copy of the server, with two people signed in at once in separate browsers:
+  - The wife's grocery change appeared on Billy's screen with one reload request, and her own phone didn't reload.
+  - Text being typed was kept, and the update appeared after leaving the box.
+  - There were zero requests during 10 s idle.
+  - Going to the background closed the connection. Coming back caught up with one `/api/changes` plus one `/api/grocery`, and reconnected.
+  - Meal plan changes appeared live.
+  - No page errors.
+- `APP_VERSION` is now 3.7.
+
+**Files:** `src/server.js`, `src/app.html`, `wrangler.toml`, `dist/worker.js`, `README.md`
 
 ---
 

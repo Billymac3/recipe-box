@@ -61,6 +61,10 @@ a{color:var(--accent-ink)}
 .top{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px}
 .top h1{font-size:clamp(2rem,9vw,2.6rem);line-height:1}
 .eyebrow{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--accent-ink)}
+.syncline{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:3px 0;border:0;background:none;color:var(--muted);font:inherit;font-size:.8rem;font-weight:600;cursor:pointer}
+.syncline svg{width:14px;height:14px}
+.syncline .dot{width:7px;height:7px;border-radius:50%;background:var(--edge)}
+.syncline.on .dot{background:#2e9d5b;box-shadow:0 0 0 3px color-mix(in srgb,#2e9d5b 25%,transparent)}
 .count{font-size:.85rem;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
 .muted{color:var(--muted)}
 .small{font-size:.88rem}
@@ -566,6 +570,11 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.7", items: [
+    "Live updates: when someone in your household changes the grocery list, meal plan or recipes, it shows up on your phone right away, without closing and reopening the app",
+    "Groceries, Meal Plan and Recipes show when they were last updated. Tap it to refresh by hand. A green dot means live updates are on",
+    "Live updates use almost no free-plan requests: the app only hears from the server when something actually changes"
+  ] },
   { version: "3.6", items: [
     "Find a photo has been removed. Add a recipe photo by uploading your own, as before. Photos already added with it stay on their recipes"
   ] },
@@ -720,8 +729,9 @@ const personName = id => id === S.me?.id ? "you" : (S.people[id] || "");
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});
 window.addEventListener("online", () => { if (S.offline) { S.offline = false; boot(); } });
 window.addEventListener("offline", () => { S.offline = true; if (S.tab === "recipes" && S.view === "list") renderList(); });
+const CLIENT_ID = Math.random().toString(36).slice(2, 12);   // tells this phone's own changes apart from others'
 async function api(path, opts = {}) {
-  const init = { method: opts.method || "GET", headers: {}, credentials: "same-origin" };
+  const init = { method: opts.method || "GET", headers: { "x-rb-client": CLIENT_ID }, credentials: "same-origin" };
   if (opts.body instanceof Blob) { init.body = opts.body; init.headers["content-type"] = opts.body.type || "application/octet-stream"; }
   else if (opts.body !== undefined) { init.body = JSON.stringify(opts.body); init.headers["content-type"] = "application/json"; }
   let res;
@@ -775,17 +785,92 @@ async function boot(){
     S.me = me.user; S.ai = me.ai; S.version = me.version; S.deployed = me.deployed || {}; S.people = Object.fromEntries(me.people.map(p => [p.id, p.name]));
     S.household = me.household; S.usage = me.usage || null; S.ads = me.ads || null; S.vapid = me.vapid || null; S.offline = !!me._offline;
     setupAds(); checkPush();
-    await Promise.all([loadRecipes(), loadGrocery()]);
-    tabs.hidden = false; render();
+    await Promise.all([loadRecipes(), loadGrocery(), api("/api/changes").then(rv => { if (rv && !rv._offline) S.revs = rv; }).catch(() => {})]);
+    tabs.hidden = false; render(); liveConnect();
   } catch (e) { if (S.me === null) renderAuth(); else { app.innerHTML = `<div class="empty"><h2>Couldn't open the recipe box</h2><p>${esc(e.message)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`; } }
 }
-async function loadRecipes(){ S.recipes = (await api("/api/recipes")).recipes; }
-async function loadGrocery(){ const d = await api("/api/grocery"); S.grocery = d.items; S.stores = d.stores || []; }
-async function loadPlan(){ S.plan = (await api("/api/plan?from=" + ymd(S.weekStart) + "&to=" + ymd(addDays(S.weekStart, 6)))).entries; }
-document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState !== "visible" || !S.me || S.view === "edit" || S.view === "import") return;
-  try { await Promise.all([loadRecipes(), loadGrocery(), S.tab === "plan" ? loadPlan() : null]); render(); } catch {}
+async function loadRecipes(){ S.recipes = (await api("/api/recipes")).recipes; S.synced = Date.now(); }
+async function loadGrocery(){ const d = await api("/api/grocery"); S.grocery = d.items; S.stores = d.stores || []; S.synced = Date.now(); }
+async function loadPlan(){ S.plan = (await api("/api/plan?from=" + ymd(S.weekStart) + "&to=" + ymd(addDays(S.weekStart, 6)))).entries; S.synced = Date.now(); }
+
+/* ---------- live updates ----------
+   While the app is open it keeps one connection to the server. Nothing is sent over it
+   until someone in the household changes the grocery list, meal plan or recipes; then
+   only the list that changed is reloaded. When the app comes back from the background,
+   one quick check catches up on anything missed while the phone was asleep. */
+let live = null, liveRetry = 0, liveTimer = null, livePing = null;
+function liveConnect(){
+  if (!S.me || live || document.visibilityState !== "visible" || !("WebSocket" in window) || location.protocol === "file:") return;
+  let ws;
+  try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/live?c=" + CLIENT_ID); } catch { return; }
+  live = ws;
+  ws.onopen = () => { liveRetry = 0; S.live = true; drawSync();
+    clearInterval(livePing); livePing = setInterval(() => { try { ws.send("ping"); } catch {} }, 60e3); };   // keeps the line from timing out; answered without waking the server
+  ws.onmessage = e => { if (e.data === "pong") return; let m; try { m = JSON.parse(e.data); } catch { return; } onLiveChange(m); };
+  ws.onclose = () => {
+    if (live === ws) live = null;
+    clearInterval(livePing); S.live = false; drawSync();
+    if (document.visibilityState === "visible" && S.me) { clearTimeout(liveTimer); liveTimer = setTimeout(liveConnect, [2e3, 5e3, 15e3, 30e3, 60e3][Math.min(liveRetry++, 4)]); }
+  };
+}
+function liveClose(){ clearTimeout(liveTimer); clearInterval(livePing); if (live) { const ws = live; live = null; try { ws.close(1000); } catch {} } S.live = false; }
+async function onLiveChange(m){
+  if (m.at) S.revs = { ...(S.revs || {}), ...Object.fromEntries((m.kinds || []).map(k => [k, m.at])) };
+  if (m.from === CLIENT_ID) return;                          // this phone made the change and already has it
+  await reloadKinds(m.kinds || []);
+  const who = S.people && S.people[m.by];
+  if (who && m.by !== (S.me && S.me.id) && (m.kinds || []).includes("g") && S.tab === "grocery") toast(who + " updated the list");
+}
+async function reloadKinds(kinds){
+  const jobs = [];
+  if (kinds.includes("g")) jobs.push(loadGrocery());
+  if (kinds.includes("r")) jobs.push(loadRecipes());
+  if (kinds.includes("p") || kinds.includes("r")) { if (S.tab === "plan") jobs.push(loadPlan()); }
+  if (!jobs.length) return;
+  try { await Promise.all(jobs); } catch { return; }
+  liveRender();
+}
+// redraw the screen with the new data, unless that would interrupt something in progress
+function liveRender(){
+  const busy = !sheetEl.hidden || !photoEl.hidden || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) || S.addingDay
+    || (S.tab === "recipes" && S.view !== "list");
+  if (busy) { S.liveDirty = true; drawSync(); return; }
+  S.liveDirty = false;
+  if (S.gSel) S.gSel = new Set([...S.gSel].filter(id => S.grocery.some(g => g.id === id)));
+  if (S.tab === "grocery" || S.tab === "plan" || (S.tab === "recipes" && S.view === "list")) { const y = window.scrollY; render(); window.scrollTo(0, y); }
+  drawSync();
+}
+// coming back to the app: one check, then reload only what changed while away
+async function catchUp(){
+  if (!S.me) return;
+  let rv; try { rv = await api("/api/changes"); } catch { return; }
+  if (!rv || rv._offline) return;
+  const old = S.revs; S.revs = rv;
+  if (!old) { drawSync(); return; }
+  const changed = ["g", "p", "r"].filter(k => rv[k] !== old[k]);
+  if (changed.length) await reloadKinds(changed); else { S.synced = Date.now(); drawSync(); }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { if (S.me) { catchUp(); liveConnect(); } }
+  else liveClose();
 });
+document.addEventListener("focusout", () => setTimeout(() => { if (S.liveDirty) liveRender(); }, 300));
+// "Updated 11:04 AM" line, with tap to refresh
+function syncText(){
+  if (S.syncing) return "Refreshing…";
+  const t = S.synced; if (!t) return "";
+  const mins = Math.floor((Date.now() - t) / 60e3);
+  const when = mins < 1 ? "just now" : mins < 60 ? mins + " min ago" : new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return (S.liveDirty ? "New changes · " : "") + "Updated " + when;
+}
+function syncLine(){ return `<button class="syncline ${S.live ? "on" : ""}" data-act="syncnow" aria-label="Refresh now"><span class="dot" aria-hidden="true"></span><span class="st">${esc(syncText())}</span>${ICON.refresh}</button>`; }
+function drawSync(){ document.querySelectorAll(".syncline").forEach(b => { b.classList.toggle("on", !!S.live); b.querySelector(".st").textContent = syncText(); }); }
+setInterval(drawSync, 30e3);
+async function syncNow(){
+  S.syncing = true; drawSync();
+  try { await Promise.all([loadRecipes(), loadGrocery(), S.tab === "plan" ? loadPlan() : null]); const rv = await api("/api/changes"); if (rv && !rv._offline) S.revs = rv; } catch (e) { toast(e.message); }
+  S.syncing = false; S.liveDirty = false; render(); liveConnect();
+}
 
 /* ---------- auth ---------- */
 function renderAuth(){
@@ -906,7 +991,7 @@ function renderList(){
     ${S.offline ? `<div class="offline" role="status">You're offline. Showing the recipes saved on this phone.</div>` : ""}
     ${usageBanner()}
     ${newsBanner()}
-    <div class="top"><div><div class="eyebrow">Our kitchen</div><h1>Recipe Box</h1></div><div class="count">${S.recipes.length} ${S.recipes.length===1?"recipe":"recipes"}</div></div>
+    <div class="top"><div><div class="eyebrow">Our kitchen</div><h1>Recipe Box</h1>${syncLine()}</div><div class="count">${S.recipes.length} ${S.recipes.length===1?"recipe":"recipes"}</div></div>
     ${S.recipes.length ? `<input id="q" class="search" type="search" placeholder="Search recipes or ingredients" value="${esc(S.q)}" aria-label="Search recipes">
     <div class="chips" role="toolbar" aria-label="Filter"><button class="chip" data-favonly aria-pressed="${S.favOnly}">★ Favorites</button>${cats.map(c => `<button class="chip" data-cat="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join("")}</div>` : ""}
     ${body}`;
@@ -916,6 +1001,7 @@ function renderList(){
 
 /* ---------- recipe detail ---------- */
 const ICON = {
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
@@ -1398,7 +1484,7 @@ function renderPlan(){
   const sorted = [...S.recipes].sort((a,b) => a.title.localeCompare(b.title));
   const label = days[0].toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " – " + days[6].toLocaleDateString(undefined,{month:"short",day:"numeric"});
   app.innerHTML = `
-    <div class="top"><div><div class="eyebrow">This week</div><h1>Meal Plan</h1></div></div>
+    <div class="top"><div><div class="eyebrow">This week</div><h1>Meal Plan</h1>${syncLine()}</div></div>
     <div class="week-nav"><button class="btn ghost" data-act="wkprev" aria-label="Previous week">←</button><strong>${esc(label)}</strong><button class="btn ghost" data-act="wknext" aria-label="Next week">→</button></div>
     <div class="days">${days.map(d => {
       const key = ymd(d), list = byDay[key] || [];
@@ -1475,7 +1561,7 @@ function renderGrocery(){
       <button class="btn primary" data-act="sdone" style="justify-self:start">Done</button>
     </div></div>`;
   app.innerHTML = `
-    <div class="top"><div><div class="eyebrow">Shared list</div><h1>Groceries</h1></div>
+    <div class="top"><div><div class="eyebrow">Shared list</div><h1>Groceries</h1>${syncLine()}</div>
       ${sel ? `<button class="btn primary" data-act="gseldone">Done</button>`
             : `<div class="top-r"><span class="count">${(S.gStore === "All" ? open.length : count(S.gStore))} to get</span>${S.grocery.length ? `<button class="btn" data-act="gselect">Edit</button>` : ""}</div>`}</div>
     ${sel ? `<p class="small muted" style="margin:0 0 6px">Tap a name to fix it. Tap the circles to select items, then move or remove them below.</p>` : (S.grocery.length ? `<p class="hint" style="margin:0 0 4px">Swipe left on the list to see who added each item.</p>` : "")}
@@ -1947,6 +2033,7 @@ app.addEventListener("click", async e => {
     else if (a === "pasteurl") { try { S.imp.url = (await navigator.clipboard.readText()).trim(); renderImport(); } catch { document.getElementById("impUrl").focus(); toast("Long-press the box and tap Paste."); } }
     else if (a === "impurl") importUrl();
     else if (a === "imptext") importText();
+    else if (a === "syncnow") { if (!S.syncing) syncNow(); }
     else if (a === "rmphoto") { snapshotForm(); S.pendingPhoto = null; S.removePhoto = true; renderEdit(); restoreForm(); }
     else if (a === "del") { snapshotForm(); S.confirmDel = true; renderEdit(); restoreForm(); }
     else if (a === "nodel") { snapshotForm(); S.confirmDel = false; renderEdit(); restoreForm(); }

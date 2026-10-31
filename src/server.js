@@ -6,7 +6,8 @@
 // tried before Workers AI) and GEMINI_MODELS (comma list to override the model order).
 // OWNER_EMAIL (the only account that can see usage and run the admin tools).
 // Copyright (c) 2026 Billy McIntyre. All rights reserved. See LICENSE.
-// A Durable Object alarm (binding: TIMERS) wakes only when a cooking timer is due.
+// A Durable Object alarm (binding: TIMERS) wakes only when a cooking timer is due, and a
+// Durable Object per household (binding: HUB) pushes live updates to open phones.
 import { DurableObject } from "cloudflare:workers";
 
 const APP_HTML = __APP_HTML__;
@@ -16,7 +17,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "3.6";
+const APP_VERSION = "3.7";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -402,7 +403,7 @@ const aiError = e => String(e && e.message) === "ai_missing" ? "Recipe reading i
 const isLimit = e => String(e && e.message) === "ai_limit";
 const limitOut = extra => ({ error: AI_LIMIT_MSG, aiLimit: true, resetAt: nextReset(), ...extra });
 
-async function api(req, env, url) {
+async function api(req, env, url, meta = {}) {
   const p = url.pathname, m = req.method;
   const body = async () => { try { return await req.json(); } catch { return {}; } };
 
@@ -488,6 +489,26 @@ async function api(req, env, url) {
   const user = await currentUser(req, env);
   if (!user) return err("Please log in.", 401);
   const H = user.hh;
+
+  // live updates: note which shared lists a change touches, so other phones in the
+  // household are told once it succeeds (see HouseholdHub)
+  if (m !== "GET") {
+    const kinds = /^\/api\/(grocery|stores)/.test(p) ? ["g"] : /^\/api\/plan/.test(p) ? ["p"]
+      : /^\/api\/(recipes|import\/backup|quicksave)/.test(p) ? (m === "DELETE" ? ["r", "p"] : ["r"]) : [];
+    if (kinds.length) Object.assign(meta, { H, kinds, by: user.id, from: String(req.headers.get("x-rb-client") || "").slice(0, 40) });
+  }
+  // one connection per open app; the server only sends something when a list changes
+  if (p === "/api/live" && m === "GET") {
+    if (req.headers.get("upgrade") !== "websocket" || !env.HUB) return err("Live updates aren't available.", 426);
+    return env.HUB.get(env.HUB.idFromName(H)).fetch(req);
+  }
+  // when each shared list last changed, so a phone coming back can catch up in one call
+  if (p === "/api/changes" && m === "GET") {
+    const rows = (await env.DB.prepare("SELECT key, value FROM settings WHERE key IN (?,?,?)").bind("rev:g:" + H, "rev:p:" + H, "rev:r:" + H).all()).results;
+    const o = { g: 0, p: 0, r: 0 };
+    for (const x of rows) o[x.key.split(":")[1]] = +x.value || 0;
+    return json(o, 200, { "cache-control": "no-store" });
+  }
 
   if (p === "/api/me" && m === "GET") {
     const [u, people, dep, hh] = await Promise.all([
@@ -1070,6 +1091,29 @@ async function fireTimers(env) {
 
 // One alarm clock for the whole app. It is set for the next timer that's due
 // and sleeps (costing nothing) whenever no timers are running.
+// One per household. Holds the open live-update connections from that household's phones.
+// Idle connections cost nothing: the object sleeps (hibernates) until a change arrives,
+// and keep-alive pings are answered automatically without waking it.
+export class HouseholdHub extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    try { this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong")); } catch {}
+  }
+  async fetch(req) {
+    const pair = new WebSocketPair(), [client, server] = Object.values(pair);
+    const cid = String(new URL(req.url).searchParams.get("c") || "").slice(0, 40);
+    this.ctx.acceptWebSocket(server, cid ? [cid] : []);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  async notify(msg) {
+    const text = JSON.stringify(msg);
+    for (const ws of this.ctx.getWebSockets()) { try { ws.send(text); } catch {} }
+  }
+  async webSocketMessage() {}
+  async webSocketClose(ws, code) { try { ws.close(code === 1005 ? 1000 : code, "closed"); } catch {} }
+  async webSocketError(ws) { try { ws.close(1011, "error"); } catch {} }
+}
+
 export class TimerClock extends DurableObject {
   async arm() {
     const r = await this.env.DB.prepare("SELECT MIN(fire_at) AS t FROM push_timers").first();
@@ -1103,7 +1147,15 @@ export default {
           const origin = req.headers.get("origin");
           if (origin && origin !== url.origin) return err("Bad origin", 403);
         }
-        return await api(req, env, url);
+        const meta = {}, res = await api(req, env, url, meta);
+        if (meta.kinds && res.status < 400) {
+          try {
+            const now = Date.now();
+            await env.DB.batch(meta.kinds.map(k => env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").bind("rev:" + k + ":" + meta.H, String(now))));
+            if (env.HUB) await env.HUB.get(env.HUB.idFromName(meta.H)).notify({ kinds: meta.kinds, by: meta.by, from: meta.from, at: now });
+          } catch (e) { console.log("live notify failed", e && e.message); }
+        }
+        return res;
       }
       const ph = url.pathname.match(/^\/photo\/([\w-]+)$/);
       if (ph) {
