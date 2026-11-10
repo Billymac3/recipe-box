@@ -429,6 +429,10 @@ body.has-ad .selbar{bottom:calc(env(safe-area-inset-bottom,0px) + 112px)}
 .auth .seg button[aria-pressed="true"]{background:var(--card);color:var(--ink)}
 .spinner{display:inline-block;width:16px;height:16px;border:2.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
+.ptr{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 8px);z-index:90;width:42px;height:42px;margin-left:-21px;border-radius:50%;background:var(--card);color:var(--muted);border:1.5px solid var(--edge);box-shadow:var(--shadow);display:grid;place-items:center;opacity:0;transform:translateY(-60px);pointer-events:none}
+.ptr svg{width:20px;height:20px}
+.ptr.ready{color:var(--accent-ink);border-color:var(--accent)}
+.ptr.spin svg{animation:spin .8s linear infinite}
 
 /* ---------- cooking mode ---------- */
 .cook{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;
@@ -570,6 +574,9 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.8", items: [
+    "Pull to refresh: drag down from the top of Groceries, Meal Plan or Recipes and let go to refresh, like other iPhone apps"
+  ] },
   { version: "3.7", items: [
     "Live updates: when someone in your household changes the grocery list, meal plan or recipes, it shows up on your phone right away, without closing and reopening the app",
     "Groceries, Meal Plan and Recipes show when they were last updated. Tap it to refresh by hand. A green dot means live updates are on",
@@ -1632,6 +1639,46 @@ function whenText(ms){
   let swallowNext = false;
   app.addEventListener("pointerup", end); app.addEventListener("pointercancel", end);
   app.addEventListener("click", e => { if (swallowNext) { swallowNext = false; e.preventDefault(); e.stopPropagation(); } }, true);
+})();
+
+// pull down from the top of Groceries, Meal Plan or Recipes to refresh, like other iPhone apps
+(function(){
+  const el = document.createElement("div"); el.className = "ptr"; el.setAttribute("aria-hidden", "true"); el.innerHTML = ICON.refresh;
+  document.body.appendChild(el);
+  const TRIGGER = 64, MAX = 100;
+  let y0 = null, x0 = 0, pull = 0, on = false;
+  const allowed = () => S.me && !S.syncing && !cook && !S.gSel && sheetEl.hidden && photoEl.hidden
+    && (S.tab === "grocery" || S.tab === "plan" || (S.tab === "recipes" && S.view === "list"));
+  const draw = (p, cls) => { el.className = "ptr" + (cls ? " " + cls : ""); el.style.opacity = Math.min(1, p / 36); el.style.transform = `translateY(${p - 60}px) rotate(${Math.round(p * 3.2)}deg)`; };
+  window.addEventListener("touchstart", e => {
+    y0 = null;
+    if (e.touches.length !== 1 || window.scrollY > 0 || !allowed() || e.target.closest("input,textarea,select")) return;
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; pull = 0; on = false; el.style.transition = "";
+  }, { passive: true });
+  window.addEventListener("touchmove", e => {
+    if (y0 === null) return;
+    const dy = e.touches[0].clientY - y0, dx = e.touches[0].clientX - x0;
+    if (!on) {
+      if (dy > 10 && dy > Math.abs(dx) * 1.5 && window.scrollY <= 0) on = true;     // a clear pull down, not a sideways swipe
+      else { if (Math.abs(dx) > 10 || dy < -6) y0 = null; return; }
+    }
+    e.preventDefault();
+    const was = pull >= TRIGGER;
+    pull = Math.min(MAX, (dy - 10) * 0.55);
+    draw(pull, pull >= TRIGGER ? "ready" : "");
+    if (!was && pull >= TRIGGER && navigator.vibrate) navigator.vibrate(8);
+  }, { passive: false });
+  const end = async () => {
+    if (y0 === null) return; y0 = null;
+    if (!on) return; on = false;
+    el.style.transition = "transform .2s, opacity .2s";
+    if (pull >= TRIGGER) {
+      draw(TRIGGER, "spin"); el.style.transform = `translateY(${TRIGGER - 60}px)`;
+      await syncNow();
+    }
+    el.style.transition = "transform .25s, opacity .25s"; el.className = "ptr"; el.style.opacity = 0; el.style.transform = "translateY(-60px)";
+  };
+  window.addEventListener("touchend", end); window.addEventListener("touchcancel", end);
 })();
 
 async function saveStores(list){

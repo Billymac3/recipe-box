@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [3.8](#38--not-live-yet) | not live yet | — | Pull down to refresh |
 | [3.7](#37--2026-11-10) | 2026-11-10 | [`3765615`](https://github.com/Billymac3/recipe-box/commit/3765615) | Live updates between phones, with last-updated line |
 | [3.6](#36--2026-10-27) | 2026-10-27 | [`1ffd335`](https://github.com/Billymac3/recipe-box/commit/1ffd335) | Find a photo removed |
 | [3.5](#35--2026-10-27) | 2026-10-27 | [`7f218e9`](https://github.com/Billymac3/recipe-box/commit/7f218e9) | Find a photo searches Wikimedia from the phone |
@@ -20,6 +21,34 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 3.8 — not live yet
+
+**Why:** Billy asked to be able to drag down from the top to refresh, like other apps. iPhone home-screen web apps don't get this built in, and the app turns off the page's bounce so screens feel steady, so it had to be added.
+
+### What changed for people using the app
+- On Groceries, Meal Plan and the Recipes list, drag down from the top and let go to refresh.
+  - A round refresh icon slides down and turns as you pull.
+  - It turns the accent color, with a light tap on phones that support it, once you've pulled far enough.
+  - It spins while refreshing, then the "Updated just now" line confirms it.
+- A short pull, a sideways swipe (like the grocery "who added it" swipe), or a drag while scrolled down the page doesn't refresh.
+- It doesn't run on the Me tab, in Edit mode, inside a recipe, during cooking mode, or while a menu or photo is open.
+
+### Technical details
+- A touch handler on `window`. It only starts when the page is scrolled to the very top, there's one finger, and the touch isn't on a text box or menu.
+- It takes over only after a clear downward pull (more than 10 px, and at least 1.5× more down than sideways). Until then, normal scrolling, swipes and press-and-hold work as before.
+- The pull distance is damped (×0.55) and capped at 100 px. Letting go past 64 px runs the same `syncNow()` as tapping the "Updated" line: it reloads recipes, groceries and, on Plan, the week, then reconnects live updates if needed.
+- Requests: one manual refresh is the same 3–4 requests as tapping "Updated". Nothing runs unless you pull.
+- Tested with simulated finger drags in a headless browser:
+  - A big pull refreshed on Recipes, Groceries and Plan.
+  - A short pull, a pull while scrolled down, a sideways swipe on the grocery list, and a pull on the Me tab didn't refresh.
+  - The spinner hid afterwards, and there were no page errors.
+- The preview gained a stand-in for `/api/changes`.
+- `APP_VERSION` is now 3.8.
+
+**Files:** `src/app.html`, `src/server.js`, `build_preview.py`, `dist/worker.js`
 
 ---
 
