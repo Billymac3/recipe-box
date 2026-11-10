@@ -8,7 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
-| [3.8](#38--not-live-yet) | not live yet | — | Pull down to refresh |
+| [3.8](#38--2026-11-10) | 2026-11-10 | [`38e70f0`](https://github.com/Billymac3/recipe-box/commit/38e70f0) | Pull down to refresh |
 | [3.7](#37--2026-11-10) | 2026-11-10 | [`3765615`](https://github.com/Billymac3/recipe-box/commit/3765615) | Live updates between phones, with last-updated line |
 | [3.6](#36--2026-10-27) | 2026-10-27 | [`1ffd335`](https://github.com/Billymac3/recipe-box/commit/1ffd335) | Find a photo removed |
 | [3.5](#35--2026-10-27) | 2026-10-27 | [`7f218e9`](https://github.com/Billymac3/recipe-box/commit/7f218e9) | Find a photo searches Wikimedia from the phone |
@@ -24,7 +24,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 ---
 
-## 3.8 — not live yet
+## 3.8 — 2026-11-10
 
 **Why:** Billy asked to be able to drag down from the top to refresh, like other apps. iPhone home-screen web apps don't get this built in, and the app turns off the page's bounce so screens feel steady, so it had to be added.
 
