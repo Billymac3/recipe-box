@@ -68,7 +68,8 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     let body = {}; try { if (init && typeof init.body === "string") body = JSON.parse(init.body); } catch {}
     await wait(120);
     if (p === "/api/me") { if (!db._pics) { db._pics = 1; samplePhoto(); } }
-    if (p === "/api/me") return ok({ user: ME, people, household: HOUSEHOLD, ai: true, version: "3.0", deployed: { "3.0": Date.now() - 3600e3 }, usage: usage(), ads: null, vapid: null });
+    if (p === "/api/tour/done") { ME.tour_done = true; return ok({ ok: true }); }
+    if (p === "/api/me") return ok({ user: { ...ME, tour_done: window.TOUR_DONE !== undefined ? window.TOUR_DONE : false }, people, household: HOUSEHOLD, ai: true, version: "3.0", deployed: { "3.0": Date.now() - 3600e3 }, usage: usage(), ads: null, vapid: null });
     if (p === "/api/household") { HOUSEHOLD = { ...HOUSEHOLD, name: body.name }; return ok({ household: HOUSEHOLD }); }
     if (p === "/api/admin/households") return ok({ households: HOUSEHOLDS, openStarters: 0 });
     if (p === "/api/admin/starter" && m === "POST") return ok({ url: "https://recipe-box.example.workers.dev/?start=n7q2x9kfp3wmz8ra", expires: Date.now() + 14 * 864e5 });

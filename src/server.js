@@ -17,7 +17,7 @@ const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "3.8";
+const APP_VERSION = "3.9";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -55,7 +55,9 @@ const MIGRATIONS = [`ALTER TABLE grocery ADD COLUMN store TEXT`,
   `CREATE INDEX IF NOT EXISTS timers_due ON push_timers (fire_at)`,
   // 3.3: credit for photos picked from the photo search
   `ALTER TABLE recipes ADD COLUMN image_credit TEXT`,
-  `ALTER TABLE recipes ADD COLUMN image_credit_url TEXT`];
+  `ALTER TABLE recipes ADD COLUMN image_credit_url TEXT`,
+  // 3.9: first-time tour. Everyone who already has an account counts as done; new sign-ups get 0
+  `ALTER TABLE users ADD COLUMN tour_done INTEGER DEFAULT 1`];
 // one-time move of everything from before 3.0 into the first household
 const BACKFILL = [
   `INSERT OR IGNORE INTO households (id, name, created) VALUES ('h1', 'Our household', strftime('%s','now') * 1000)`,
@@ -440,7 +442,7 @@ async function api(req, env, url, meta = {}) {
       writes.push(env.DB.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").bind("stores:" + hh, JSON.stringify(DEFAULT_STORES)));
       writes.push(env.DB.prepare("UPDATE starter_codes SET used_by = ? WHERE token_hash = ?").bind(id, starterHash));
     }
-    writes.push(env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created,household_id,is_admin) VALUES (?,?,?,?,?,?,?,?,0)").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), now, hh));
+    writes.push(env.DB.prepare("INSERT INTO users (id,email,name,pass_hash,salt,quick_key,created,household_id,is_admin,tour_done) VALUES (?,?,?,?,?,?,?,?,0,0)").bind(id, email, name, await hashPassword(pw, salt), salt, randHex(20), now, hh));
     if (inviteHash) writes.push(env.DB.prepare("UPDATE invites SET used_by = ? WHERE token_hash = ?").bind(id, inviteHash));
     await env.DB.batch(writes);
     return startSession(env, id);
@@ -510,14 +512,18 @@ async function api(req, env, url, meta = {}) {
     return json(o, 200, { "cache-control": "no-store" });
   }
 
+  if (p === "/api/tour/done" && m === "POST") {
+    await env.DB.prepare("UPDATE users SET tour_done = 1 WHERE id = ?").bind(user.id).run();
+    return json({ ok: true });
+  }
   if (p === "/api/me" && m === "GET") {
     const [u, people, dep, hh] = await Promise.all([
-      env.DB.prepare("SELECT quick_key FROM users WHERE id = ?").bind(user.id).first(),
+      env.DB.prepare("SELECT quick_key, tour_done FROM users WHERE id = ?").bind(user.id).first(),
       env.DB.prepare("SELECT id, name FROM users WHERE household_id = ? ORDER BY created").bind(H).all(),
       env.DB.prepare("SELECT key, value FROM settings WHERE key LIKE 'deployed:%'").all(),
       env.DB.prepare("SELECT id, name FROM households WHERE id = ?").bind(H).first()
     ]);
-    const out = { user: { id: user.id, email: user.email, name: user.name, quick_key: u.quick_key, is_admin: !!user.is_admin },
+    const out = { user: { id: user.id, email: user.email, name: user.name, quick_key: u.quick_key, is_admin: !!user.is_admin, tour_done: u.tour_done !== 0 },
       people: people.results, household: hh || { id: H, name: "" }, ai: !!env.AI, version: APP_VERSION,
       deployed: Object.fromEntries(dep.results.map(r => [r.key.slice(9), +r.value])),
       ads: env.ADSENSE_CLIENT && env.ADSENSE_SLOT ? { client: env.ADSENSE_CLIENT, slot: env.ADSENSE_SLOT } : null,

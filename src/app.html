@@ -429,6 +429,20 @@ body.has-ad .selbar{bottom:calc(env(safe-area-inset-bottom,0px) + 112px)}
 .auth .seg button[aria-pressed="true"]{background:var(--card);color:var(--ink)}
 .spinner{display:inline-block;width:16px;height:16px;border:2.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
+.tour{position:fixed;inset:0;z-index:95;touch-action:none}
+.tour-hole{position:fixed;border-radius:16px;box-shadow:0 0 0 200vmax rgba(12,8,6,.66);outline:3px solid #fff;outline-offset:3px;pointer-events:none}
+.tour-hole.none{outline:0;width:0!important;height:0!important;left:50%!important;top:40%!important}
+@media (prefers-reduced-motion:no-preference){.tour-hole{transition:left .28s ease,top .28s ease,width .28s ease,height .28s ease}.tour-card{transition:top .28s ease,bottom .28s ease}}
+.tour-card{position:fixed;left:16px;right:16px;max-width:420px;margin:0 auto;background:var(--card);color:var(--ink);border:1.5px solid var(--edge);border-radius:20px;padding:16px 18px 14px;box-shadow:0 14px 40px rgba(0,0,0,.4)}
+.tour-k{font-size:.74rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink)}
+.tour-card h3{margin:4px 0 6px;font-family:var(--display);font-weight:var(--display-weight,800);font-size:1.3rem;line-height:1.15;letter-spacing:var(--display-track,0)}
+.tour-card p{margin:0;line-height:1.45}
+.tour-nav{display:flex;align-items:center;gap:8px;margin-top:14px}
+.tour-nav .skip{margin-right:auto;background:none;border:0;color:var(--muted);font:inherit;font-weight:700;padding:10px 4px;cursor:pointer}
+.tour-dots{display:flex;gap:5px;margin-top:12px}
+.tour-dots i{width:7px;height:7px;border-radius:50%;background:var(--line)}
+.tour-dots i.on{background:var(--accent);width:18px;border-radius:4px}
+.me-tour{margin-left:auto}
 .ptr{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 8px);z-index:90;width:42px;height:42px;margin-left:-21px;border-radius:50%;background:var(--card);color:var(--muted);border:1.5px solid var(--edge);box-shadow:var(--shadow);display:grid;place-items:center;opacity:0;transform:translateY(-60px);pointer-events:none}
 .ptr svg{width:20px;height:20px}
 .ptr.ready{color:var(--accent-ink);border-color:var(--accent)}
@@ -574,6 +588,10 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "3.9", items: [
+    "A guided tour for new users: it highlights the real buttons one at a time, covering adding recipes, press-and-hold, cooking mode and timers, the meal plan, the shared grocery list, live updates, lock-screen alerts, the Share button shortcut and inviting family",
+    "Replay it anytime from Me → Show me around"
+  ] },
   { version: "3.8", items: [
     "Pull to refresh: drag down from the top of Groceries, Meal Plan or Recipes and let go to refresh, like other iPhone apps"
   ] },
@@ -658,6 +676,7 @@ function versionDate(v){
   return ms ? new Date(ms).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "";
 }
 const seenVersion = () => { try { return localStorage.getItem("rb-seen-version"); } catch { return null; } };
+function markSeenAs(v){ try { localStorage.setItem("rb-seen-version", v || CHANGELOG[0].version); } catch {} }
 function markSeen(){ try { localStorage.setItem("rb-seen-version", S.version || CHANGELOG[0].version); } catch {} }
 function newsBanner(){
   const cur = S.version || CHANGELOG[0].version;
@@ -790,10 +809,12 @@ async function boot(){
     const me = await api("/api/me");
     if (INVITE || START) { INVITE = START = null; try { history.replaceState(null, "", location.pathname); } catch {} }
     S.me = me.user; S.ai = me.ai; S.version = me.version; S.deployed = me.deployed || {}; S.people = Object.fromEntries(me.people.map(p => [p.id, p.name]));
+    if (me.user && me.user.tour_done === false) markSeenAs(me.version);   // brand-new account: the tour stands in for "what's new"
     S.household = me.household; S.usage = me.usage || null; S.ads = me.ads || null; S.vapid = me.vapid || null; S.offline = !!me._offline;
     setupAds(); checkPush();
     await Promise.all([loadRecipes(), loadGrocery(), api("/api/changes").then(rv => { if (rv && !rv._offline) S.revs = rv; }).catch(() => {})]);
     tabs.hidden = false; render(); liveConnect();
+    if (S.me && S.me.tour_done === false) setTimeout(() => startTour(true), 700);
   } catch (e) { if (S.me === null) renderAuth(); else { app.innerHTML = `<div class="empty"><h2>Couldn't open the recipe box</h2><p>${esc(e.message)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`; } }
 }
 async function loadRecipes(){ S.recipes = (await api("/api/recipes")).recipes; S.synced = Date.now(); }
@@ -839,7 +860,7 @@ async function reloadKinds(kinds){
 }
 // redraw the screen with the new data, unless that would interrupt something in progress
 function liveRender(){
-  const busy = !sheetEl.hidden || !photoEl.hidden || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) || S.addingDay
+  const busy = !!tour || !sheetEl.hidden || !photoEl.hidden || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) || S.addingDay
     || (S.tab === "recipes" && S.view !== "list");
   if (busy) { S.liveDirty = true; drawSync(); return; }
   S.liveDirty = false;
@@ -1647,7 +1668,7 @@ function whenText(ms){
   document.body.appendChild(el);
   const TRIGGER = 64, MAX = 100;
   let y0 = null, x0 = 0, pull = 0, on = false;
-  const allowed = () => S.me && !S.syncing && !cook && !S.gSel && sheetEl.hidden && photoEl.hidden
+  const allowed = () => S.me && !tour && !S.syncing && !cook && !S.gSel && sheetEl.hidden && photoEl.hidden
     && (S.tab === "grocery" || S.tab === "plan" || (S.tab === "recipes" && S.view === "list"));
   const draw = (p, cls) => { el.className = "ptr" + (cls ? " " + cls : ""); el.style.opacity = Math.min(1, p / 36); el.style.transform = `translateY(${p - 60}px) rotate(${Math.round(p * 3.2)}deg)`; };
   window.addEventListener("touchstart", e => {
@@ -1681,6 +1702,87 @@ function whenText(ms){
   window.addEventListener("touchend", end); window.addEventListener("touchcancel", end);
 })();
 
+/* ---------- first-time tour ----------
+   Spotlights the real buttons one at a time. Starts once for new accounts and can be
+   replayed from Me → Show me around. Stops whose button isn't on screen (an empty recipe
+   box, say) show their tip in the middle instead. */
+const TOUR = [
+  { title: "Welcome to Recipe Box", text: "Here's a quick look around. It takes about a minute. Skip anytime, and replay it later from Me → Show me around." },
+  { tab: "recipes", sel: "#fab", title: "Add a recipe", text: "Paste a link from any recipe site, Instagram, Facebook or TikTok, paste the recipe text, or add screenshots. Neatly laid-out recipes are sorted for you." },
+  { tab: "recipes", sel: ".grid .tile", title: "Open it, or press and hold", text: "Tap a recipe to open it. Press and hold a recipe, an ingredient, a grocery item or a planned meal for quick actions like favorite, plan or remove." },
+  { tab: "recipes", title: "Cooking mode and timers", text: "Inside a recipe, tap Start cooking for big, one-step-at-a-time instructions that keep your screen on. Steps that mention a time get a timer with an alarm. Press and hold ingredients to pick several and send them to the grocery list." },
+  { tab: "plan", sel: ".addday", title: "Plan the week", text: "Add a recipe or a quick note like “Leftovers” to any day. Tap a planned meal to jump straight to its recipe." },
+  { tab: "grocery", sel: "#gform", title: "One shared grocery list", text: "Add items and pick the store you'll buy them at. Everyone in your household sees changes right away." },
+  { tab: "grocery", sel: ".glist", alt: ".chips", title: "Swipe and Edit", text: "Swipe left on the list to see who added each item and when. Tap Edit to select several items at once and move them to a store, rename them or remove them." },
+  { tab: "grocery", sel: ".syncline", title: "Always up to date", text: "A green dot means changes from your household show up live. To refresh by hand, pull down from the top of the screen or tap here." },
+  { tab: "me", sel: '[data-acc="sound"]', title: "Timer alarms", text: "Pick your alarm sound and turn on lock-screen alerts, so timers still go off when your phone is locked." },
+  { tab: "me", sel: '[data-acc="share"]', title: "Save from the Share button", text: "Set up the Save Recipe shortcut once, then save recipes straight from Safari, Instagram or Facebook with the Share button." },
+  { tab: "me", sel: '[data-acc="household"]', title: "Bring your family", text: "Send an invite link so your family shares the same recipes, grocery list and meal plan." },
+  { title: "You're all set", text: "Replay this anytime from Me → Show me around. Happy cooking!" }
+];
+let tour = null;
+const tourEl = document.createElement("div");
+tourEl.className = "tour"; tourEl.hidden = true; tourEl.setAttribute("role", "dialog"); tourEl.setAttribute("aria-modal", "true"); tourEl.setAttribute("aria-label", "Tour");
+document.body.appendChild(tourEl);
+function startTour(auto){
+  if (cook || !S.me) return;
+  S.meOpen = null; S.gSel = null; S.view = "list";
+  tour = { i: 0, auto }; tourEl.hidden = false; document.body.style.overflow = "hidden";
+  showStop();
+}
+function endTour(){
+  if (!tour) return;
+  const wasAuto = tour.auto; tour = null; tourEl.hidden = true; tourEl.innerHTML = ""; document.body.style.overflow = "";
+  if (S.me && !S.me.tour_done) { S.me.tour_done = true; api("/api/tour/done", { method: "POST", body: {} }).catch(() => {}); }
+  goNow("recipes");
+  if (wasAuto) toast("Replay the tour anytime from Me → Show me around");
+}
+async function showStop(){
+  if (!tour) return;
+  const st = TOUR[tour.i];
+  if (st.tab && S.tab !== st.tab) { goNow(st.tab); await new Promise(r => setTimeout(r, 120)); }
+  if (!tour) return;
+  let target = st.sel && [...document.querySelectorAll(st.sel)].find(e => e.offsetParent || getComputedStyle(e).position === "fixed");
+  if (!target && st.alt) target = document.querySelector(st.alt);
+  if (target && getComputedStyle(target).position !== "fixed") { target.scrollIntoView({ block: "center" }); await new Promise(r => setTimeout(r, 60)); }
+  drawStop(target);
+}
+function drawStop(target){
+  if (!tour) return;
+  const st = TOUR[tour.i], n = TOUR.length, last = tour.i === n - 1;
+  tourEl.innerHTML = `<div class="tour-hole ${target ? "" : "none"}"></div>
+    <div class="tour-card" role="document">
+      <div class="tour-k">${tour.i === 0 || last ? "Tour" : tour.i + " of " + (n - 2)}</div>
+      <h3>${esc(st.title)}</h3><p>${esc(st.text)}</p>
+      <div class="tour-dots" aria-hidden="true">${TOUR.map((_, j) => `<i class="${j === tour.i ? "on" : ""}"></i>`).join("")}</div>
+      <div class="tour-nav">${last ? "" : `<button class="skip" data-tour="skip">Skip tour</button>`}${tour.i > 0 ? `<button class="btn" data-tour="back">Back</button>` : ""}<button class="btn primary" data-tour="next">${last ? "Done" : tour.i === 0 ? "Show me" : "Next"}</button></div>
+    </div>`;
+  const hole = tourEl.querySelector(".tour-hole"), card = tourEl.querySelector(".tour-card");
+  const pad = 8, vh = window.innerHeight;
+  if (target) {
+    const r = target.getBoundingClientRect();
+    Object.assign(hole.style, { left: (r.left - pad) + "px", top: (r.top - pad) + "px", width: (r.width + pad * 2) + "px", height: (r.height + pad * 2) + "px" });
+    if (r.top + r.height / 2 > vh / 2) card.style.bottom = Math.max(12, vh - r.top + pad + 14) + "px";
+    else card.style.top = Math.min(vh - card.offsetHeight - 12, r.bottom + pad + 14) + "px";
+  } else card.style.top = Math.max(16, (vh - card.offsetHeight) / 2) + "px";
+  tourEl.querySelector('[data-tour="next"]').focus({ preventScroll: true });
+}
+tourEl.addEventListener("click", e => {
+  const b = e.target.closest("[data-tour]"); if (!b || !tour) return;
+  const a = b.dataset.tour;
+  if (a === "skip") return endTour();
+  if (a === "back") { tour.i = Math.max(0, tour.i - 1); return showStop(); }
+  if (tour.i >= TOUR.length - 1) return endTour();
+  tour.i++; showStop();
+});
+document.addEventListener("keydown", e => {
+  if (!tour) return;
+  if (e.key === "Escape") endTour();
+  else if (e.key === "ArrowRight") { if (tour.i < TOUR.length - 1) { tour.i++; showStop(); } }
+  else if (e.key === "ArrowLeft") { if (tour.i > 0) { tour.i--; showStop(); } }
+});
+window.addEventListener("resize", () => { if (tour) showStop(); });
+
 async function saveStores(list){
   try { S.stores = (await api("/api/stores", { method: "PUT", body: { stores: list } })).stores; } catch (err) { toast(err.message); }
   renderGrocery();
@@ -1702,7 +1804,7 @@ function renderMeNow(){
   const sec = (id, title, sub, body) => { const open = S.meOpen === id;
     return `<section class="acc ${open ? "open" : ""}"><button class="acc-h" data-acc="${id}" aria-expanded="${open}"><span class="acc-t"><b>${esc(title)}</b><span>${esc(sub)}</span></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>${open ? `<div class="acc-b form">${body()}</div>` : ""}</section>`; };
   app.innerHTML = `
-    <div class="top"><div><div class="eyebrow">Signed in</div><h1>${esc(S.me.name)}</h1></div></div>
+    <div class="top"><div><div class="eyebrow">Signed in</div><h1>${esc(S.me.name)}</h1></div><button class="btn me-tour" data-act="tour">Show me around</button></div>
     <div class="accs">
     ${sec("look", "Look", `${(PALETTES.find(p => p.id === currentPalette()) || PALETTES[0]).name} · ${(FONTS.find(f => f.id === currentFont()) || FONTS[0]).name} · ${({auto:"Auto",light:"Light",dark:"Dark"})[currentMode()]}`, () => `
       <div class="cook-h">Colors</div>
@@ -2080,6 +2182,7 @@ app.addEventListener("click", async e => {
     else if (a === "pasteurl") { try { S.imp.url = (await navigator.clipboard.readText()).trim(); renderImport(); } catch { document.getElementById("impUrl").focus(); toast("Long-press the box and tap Paste."); } }
     else if (a === "impurl") importUrl();
     else if (a === "imptext") importText();
+    else if (a === "tour") startTour(false);
     else if (a === "syncnow") { if (!S.syncing) syncNow(); }
     else if (a === "rmphoto") { snapshotForm(); S.pendingPhoto = null; S.removePhoto = true; renderEdit(); restoreForm(); }
     else if (a === "del") { snapshotForm(); S.confirmDel = true; renderEdit(); restoreForm(); }

@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [3.9](#39--not-live-yet) | not live yet | — | First-time guided tour, replay from Me |
 | [3.8](#38--2026-11-10) | 2026-11-10 | [`38e70f0`](https://github.com/Billymac3/recipe-box/commit/38e70f0) | Pull down to refresh |
 | [3.7](#37--2026-11-10) | 2026-11-10 | [`3765615`](https://github.com/Billymac3/recipe-box/commit/3765615) | Live updates between phones, with last-updated line |
 | [3.6](#36--2026-10-27) | 2026-10-27 | [`1ffd335`](https://github.com/Billymac3/recipe-box/commit/1ffd335) | Find a photo removed |
@@ -21,6 +22,51 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 3.9 — not live yet
+
+**Why:** Billy asked for a walkthrough for first-time users that shows how to use the app and the features that aren't obvious. He picked the spotlight style, showing automatically for new users plus a button on the Me tab to replay it. It covers adding recipes, hidden gestures, cooking and timers, and groceries, plan and sharing.
+
+### What changed for people using the app
+- **New accounts get a guided tour the first time they open the app.** The screen dims and each stop puts a white outline around the real button, with a short tip, Back / Next and Skip tour. It moves between tabs on its own. The 12 stops are:
+  1. Welcome
+  2. **+ Add recipe**: links, Instagram, Facebook, TikTok, pasted text, screenshots
+  3. A recipe card: tap to open, press and hold for quick actions
+  4. Cooking mode, step timers, sending ingredients to the grocery list
+  5. **+ Add a meal** on the meal plan
+  6. The grocery add bar and stores, shared live
+  7. The grocery list: swipe left to see who added each item, Edit to select several at once
+  8. The **Updated** line: live updates, pull down or tap to refresh
+  9. **Timer sound** and lock-screen alerts
+  10. **Share button shortcut**
+  11. **Household** invites
+  12. Done
+- If a button isn't on screen (a new user has no recipes yet), that stop's tip shows in the middle instead.
+- **Me → Show me around** replays the tour anytime.
+- Existing accounts (Billy, Jackie, current friends) don't see it automatically.
+- Brand-new accounts no longer see the "Recipe Box was updated" banner on their first day. The tour takes its place.
+
+### Technical details
+- New `users.tour_done` column, added with `DEFAULT 1` so every existing account counts as done. Sign-ups now set it to `0`.
+- `/api/me` returns `tour_done`, and new `POST /api/tour/done` marks it finished, from Done or Skip. It's saved per account, so the tour won't show again on another phone.
+- The tour runs on top of the screen:
+  - A highlight cut out of a dimmed layer, using a large `box-shadow`, with a 3 px white outline.
+  - The tip card sits above or below the highlighted button, whichever has room.
+  - It moves smoothly between stops unless the phone's Reduce Motion setting is on.
+- Escape skips, and the arrow keys go back and forward. The page can't scroll underneath, and the tour re-measures when the screen size changes.
+- Live updates and pull-to-refresh pause while the tour is open, so the screen can't redraw under it.
+- Tested in a headless browser, light (Tomato) and dark (Blueberry):
+  - All 12 stops land on the right tab and button, and no tip card covers its highlight.
+  - Back works, Done returns to Recipes and marks it finished, and replaying then skipping from Me works.
+  - No update banner for a new account, no page errors.
+- Tested on a local copy of the server:
+  - A new sign-up gets `tour_done: false`, and finishing sets it `true`.
+  - An account created the old way defaults to `1`.
+- `APP_VERSION` is now 3.9.
+
+**Files:** `src/server.js`, `src/app.html`, `build_preview.py`, `dist/worker.js`
 
 ---
 
