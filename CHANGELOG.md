@@ -8,7 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
-| [3.7](#37--not-live-yet) | not live yet | — | Live updates between phones, with last-updated line |
+| [3.7](#37--2026-11-10) | 2026-11-10 | [`3765615`](https://github.com/Billymac3/recipe-box/commit/3765615) | Live updates between phones, with last-updated line |
 | [3.6](#36--2026-10-27) | 2026-10-27 | [`1ffd335`](https://github.com/Billymac3/recipe-box/commit/1ffd335) | Find a photo removed |
 | [3.5](#35--2026-10-27) | 2026-10-27 | [`7f218e9`](https://github.com/Billymac3/recipe-box/commit/7f218e9) | Find a photo searches Wikimedia from the phone |
 | [3.4](#34--2026-10-27) | 2026-10-27 | [`cab4bca`](https://github.com/Billymac3/recipe-box/commit/cab4bca) | Find a photo uses Wikimedia Commons when there's no Pexels key |
@@ -23,7 +23,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 ---
 
-## 3.7 — not live yet
+## 3.7 — 2026-11-10
 
 **Why:** If one person added to the grocery list, the other had to close and reopen the app to see it. Billy asked for updates to show up only when someone actually makes a change (not by checking every few seconds), without using up free-plan requests, and for a line showing when the list was last refreshed.
 
