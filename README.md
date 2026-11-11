@@ -19,6 +19,7 @@ It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with o
 | `src/parse.js` | Recipe sorter that needs no AI, shared by the server and the app |
 | `src/sw.js` | Service worker: offline copies of the app and data, and lock-screen notifications |
 | `src/privacy.html` | Privacy page served at `/privacy` |
+| `src/vendor/` | jsPDF 4.2.1 (MIT license, file included) for Print / PDF, served at `/vendor/jspdf.js` |
 | `themes.py` | Color palettes (light and dark), font styles, and contrast tuning |
 | `build.py` | Bundles everything into `dist/worker.js` (what Cloudflare runs) |
 | `build_preview.py` | A stand-alone preview with example data (`dist/preview.html`, not committed) |
@@ -30,6 +31,7 @@ It runs free on Cloudflare (Workers, D1, Workers AI and Durable Objects), with o
   - `INVITE_CODE` lets someone join the first household.
   - `ADSENSE_CLIENT` and `ADSENSE_SLOT` are optional. They turn on the banner ad.
   - `OWNER_EMAIL` is the only account that can see usage and use the owner tools. Nobody is made owner automatically.
+  - `USDA_API_KEY` is optional but recommended. It's a free key from api.data.gov for nutrition lookups (USDA FoodData Central). Without it, USDA's shared `DEMO_KEY` is tried, which has low limits.
   - `GEMINI_API_KEY` is optional. It's a free key from Google AI Studio that makes Gemini read recipes first, with Cloudflare's AI as the backup. `GEMINI_MODELS` (a comma-separated list) can override which Gemini models are tried, in order.
 - **No cron triggers.** Timer alerts use a Durable Object alarm that wakes only when a timer is due.
 - **The database updates itself.** Schema changes run on the first request after a deploy. They only add tables and columns and never delete data.

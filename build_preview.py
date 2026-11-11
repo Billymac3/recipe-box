@@ -74,6 +74,17 @@ try { if (!localStorage.getItem("rb-seen-version")) localStorage.setItem("rb-see
     if (p === "/api/admin/households") return ok({ households: HOUSEHOLDS, openStarters: 0 });
     if (p === "/api/admin/starter" && m === "POST") return ok({ url: "https://recipe-box.example.workers.dev/?start=n7q2x9kfp3wmz8ra", expires: Date.now() + 14 * 864e5 });
     if (p === "/api/admin/starter") return ok({ ok: true });
+    { const mn = p.match(/^\/api\/recipes\/([\w-]+)\/nutrition$/);
+      if (mn) { const r = db.recipes.find(x => x.id === mn[1]); await new Promise(z => setTimeout(z, 700));
+        const T = [[/flour/, "Wheat flour, white, all-purpose", 364, 10, 1, 76, 2.7, .3, 2, 125], [/sugar/, "Sugars, granulated", 387, 0, 0, 100, 0, 100, 1, 200], [/butter/, "Butter, salted", 717, .9, 81, .1, 0, .1, 643, 227],
+          [/egg/, "Egg, whole, raw, fresh", 143, 12.6, 9.5, .7, 0, .4, 142, 50], [/milk/, "Milk, whole", 61, 3.2, 3.3, 4.8, 0, 5.1, 43, 244], [/chocolate/, "Chocolate chips, semisweet", 479, 4.2, 30, 63.9, 5.9, 54.5, 11, 170],
+          [/oil/, "Oil, olive", 884, 0, 100, 0, 0, 0, 2, 216], [/chicken/, "Chicken thigh, raw", 121, 19.7, 4.1, 0, 0, 0, 95, 115], [/garlic/, "Garlic, raw", 149, 6.4, .5, 33, 2.1, 1, 17, 3], [/onion/, "Onions, raw", 40, 1.1, .1, 9.3, 1.7, 4.2, 4, 110]];
+        const total = { kcal: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sugar: 0, sodium: 0 }, K = Object.keys(total);
+        const items = r.ingredients.split("\n").filter(l => l.trim() && !/:$/.test(l)).map(line => { const t = T.find(x => x[0].test(line.toLowerCase()));
+          if (!t) return /salt|pepper|water/i.test(line) ? { line, skip: "not counted" } : { line, skip: "no match" };
+          const g = t[9]; const it = { line, food: t[1], g, how: "USDA cup weight" }; K.forEach((k, j) => { it[k] = t[2 + j] * g / 100; total[k] += it[k]; }); return it; });
+        r.nutrition = JSON.stringify({ v: 1, at: Date.now(), src: r.ingredients, more: false, total, items });
+        return ok({ nutrition: JSON.parse(r.nutrition) }); } }
     if (p === "/api/changes") { window.SYNC_CALLS = (window.SYNC_CALLS || 0) + 1; return ok({ g: 0, p: 0, r: 0 }); }
     if (p === "/api/admin/gemini-test") return ok({ ok: true, status: { state: "ok" } });
     if (p === "/api/admin/usage") { const d = (k) => new Date(Date.now() - k * 864e5).toISOString().slice(0, 10); const days = []; [[6,3100,2],[5,2800,1],[4,5200,7],[3,3900,3],[2,4400,4],[1,6100,9],[0,4210,6]].forEach(([k, r, a]) => { days.push({ day: d(k), key: "requests", n: r }, { day: d(k), key: "ai_calls", n: a }); }); return ok({ today: usage(), days, limits: {} }); }
@@ -129,7 +140,7 @@ head = head.replace("<title>Recipe Box</title>", "<title>Recipe Box Preview</tit
 # the preview runs inside a frame that already pads for the phone's notch
 head = head.replace("padding-top:env(safe-area-inset-top,0px)}", "}", 1)
 main_script_at = body.index("<script>\n\"use strict\";")
-body = body[:main_script_at] + "<script>" + (root / "src" / "parse.js").read_text() + "</script>\n" + MOCK + body[main_script_at:]
+body = body[:main_script_at] + "<script>" + (root / "src" / "parse.js").read_text() + "</script>\n<script>" + (root / "src" / "vendor" / "jspdf-4.2.1.umd.min.js").read_text() + "</script>\n" + MOCK + body[main_script_at:]
 body = body.replace('<div class="wrap" id="app">', BANNER + '<div class="wrap" id="app">', 1)
 out = head.strip() + "\n" + body.strip() + "\n"
 (root / "dist" / "preview.html").write_text(out)

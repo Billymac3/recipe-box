@@ -122,7 +122,10 @@ a.btn{text-decoration:none;color:var(--ink)}
 .stat b{display:block;font-family:var(--display);font-weight:var(--display-weight);font-size:1.15rem;line-height:1.15;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .stat span{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 .start{margin-top:16px}
-.actions-bar{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.actions-bar{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px}
+.actions-bar .btn{flex-direction:column;gap:3px;padding:9px 4px;font-size:.84rem;line-height:1.15;white-space:nowrap}
+.actions-bar .btn svg{width:20px;height:20px}
+.stat.long b{font-size:.95rem;overflow-wrap:normal;word-break:normal;hyphens:none}
 .inline-panel{margin-top:10px;background:var(--accent-soft);border-radius:var(--radius-sm);padding:12px;display:grid;gap:10px}
 .sec{margin-top:26px}
 .sec-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
@@ -443,6 +446,26 @@ body.has-ad .selbar{bottom:calc(env(safe-area-inset-bottom,0px) + 112px)}
 .tour-dots i{width:7px;height:7px;border-radius:50%;background:var(--line)}
 .tour-dots i.on{background:var(--accent);width:18px;border-radius:4px}
 .me-tour{margin-left:auto}
+.nutri-k{font-size:.78rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:2px 0 8px}
+.nutri{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.nutri>div{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.nutri>div.big{grid-column:1/-1;flex-direction:row;align-items:baseline;gap:10px;background:var(--accent-soft);border-color:var(--edge)}
+.nutri b{font-size:1.25rem;line-height:1.1}
+.nutri .big b{font-size:1.9rem}
+.nutri b small{font-size:.75rem;font-weight:700;margin-left:2px;color:var(--muted)}
+.nutri span{font-size:.8rem;color:var(--muted);font-weight:600}
+.nutri-warn{background:var(--accent-soft);border-radius:12px;padding:8px 12px;font-size:.88rem;margin:0 0 10px}
+.nutri-how{margin-top:10px}
+.nutri-how summary{cursor:pointer;font-weight:700;color:var(--accent-ink);padding:6px 0}
+.nutri-how ul{list-style:none;padding:0;margin:6px 0;display:grid;gap:8px}
+.nutri-how li{display:grid;gap:1px;font-size:.88rem}
+.nutri-how li span{color:var(--muted)}
+.useg{display:inline-flex;width:max-content;max-width:100%;border:1.5px solid var(--edge);border-radius:999px;overflow:hidden;background:var(--card);vertical-align:middle}
+.useg button{border:0;background:none;color:var(--muted);font:inherit;font-size:.8rem;font-weight:700;padding:6px 11px;cursor:pointer;min-height:32px}
+.useg button+button{border-left:1.5px solid var(--line)}
+.useg button[aria-checked="true"]{background:var(--accent);color:var(--on-accent)}
+.sec-h .useg{margin-left:auto;margin-right:8px}
+.g-units{display:flex;align-items:center;gap:8px;margin:2px 0 8px}
 .ptr{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 8px);z-index:90;width:42px;height:42px;margin-left:-21px;border-radius:50%;background:var(--card);color:var(--muted);border:1.5px solid var(--edge);box-shadow:var(--shadow);display:grid;place-items:center;opacity:0;transform:translateY(-60px);pointer-events:none}
 .ptr svg{width:20px;height:20px}
 .ptr.ready{color:var(--accent-ink);border-color:var(--accent)}
@@ -588,6 +611,12 @@ function usageBanner(){
 /* ---------- what's new ---------- */
 // Newest first. Every update adds an entry here and bumps APP_VERSION in server.js to match.
 const CHANGELOG = [
+  { version: "4.0", items: [
+    "US / Metric: show every ingredient amount in US or metric units on recipes, in cooking mode and on the grocery list. Flip it from a recipe, the grocery list, or Me → Units. Cups of flour, sugar, butter and other baking staples become grams (and back)",
+    "°F / °C: oven temperatures in the steps follow your choice in Me → Units",
+    "Print / PDF: make a clean PDF of any recipe, with the photo, amounts in your units and nutrition, then print it, save it to Files or send it from the Share sheet",
+    "Nutrition: tap Calculate nutrition on a recipe for calories, protein, carbs, fat, fiber, sugar and sodium per serving, worked out from USDA food data. See exactly how each ingredient was counted",
+  ] },
   { version: "3.9", items: [
     "A guided tour for new users: it highlights the real buttons one at a time, covering adding recipes, press-and-hold, cooking mode and timers, the meal plan, the shared grocery list, live updates, lock-screen alerts, the Share button shortcut and inviting family",
     "Replay it anytime from Me → Show me around"
@@ -801,6 +830,125 @@ function scaleLine(line, f){
   return esc(m[1]) + '<span class="scaled">' + esc(out) + "</span>" + esc(line.slice(m[0].length));
 }
 function scaleText(line, f){ return f === 1 ? line : scaleLine(line, f).replace(/<[^>]+>/g, "").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'"); }
+/* ---------- units: US / Metric amounts, °F / °C temperatures ----------
+   One app-wide choice per person (Me → Units, or the quick switch on recipes and the
+   grocery list). Only changes what's shown; recipes are saved exactly as written. */
+const unitPref = () => { try { const v = localStorage.getItem("rb-units"); return v === "us" || v === "metric" ? v : ""; } catch { return ""; } };
+const tempPref = () => { try { const v = localStorage.getItem("rb-temp"); return v === "F" || v === "C" ? v : ""; } catch { return ""; } };
+const UNITS = [   // [pattern, kind, size in ml or g, system]
+  [/^T\b\.?/, "v", 14.7868, "s"],
+  [/^(teaspoons?|tsps?|t)\b\.?/i, "v", 4.92892, "s"],
+  [/^(tablespoons?|tbsps?|tbs|tbl)\b\.?/i, "v", 14.7868, "s"],
+  [/^(fl\.?\s*oz\.?|fluid\s+ounces?)/i, "v", 29.5735, "us"],
+  [/^(cups?|c)\b\.?/i, "v", 236.588, "us"],
+  [/^(pints?|pts?)\b\.?/i, "v", 473.176, "us"],
+  [/^(quarts?|qts?)\b\.?/i, "v", 946.353, "us"],
+  [/^(gallons?|gal)\b\.?/i, "v", 3785.41, "us"],
+  [/^(ounces?|oz)\b\.?/i, "w", 28.3495, "us"],
+  [/^(pounds?|lbs?)\b\.?/i, "w", 453.592, "us"],
+  [/^(millilit(?:er|re)s?|ml|mls)\b\.?/i, "v", 1, "m"],
+  [/^(decilit(?:er|re)s?|dl)\b\.?/i, "v", 100, "m"],
+  [/^(lit(?:er|re)s?|l)\b\.?/i, "v", 1000, "m"],
+  [/^(kilograms?|kgs?)\b\.?/i, "w", 1000, "m"],
+  [/^(grams?|gr|g)\b\.?/i, "w", 1, "m"]
+];
+// grams per US cup for ingredients usually measured by weight in metric recipes
+const DENSITY = [
+  [/powdered sugar|confectioners|icing sugar/, 120], [/brown sugar/, 213], [/coconut sugar/, 150], [/\bsugar\b|granulated/, 200],
+  [/almond flour|almond meal/, 96], [/bread flour/, 127], [/cake flour|pastry flour/, 114], [/whole wheat flour/, 120], [/coconut flour/, 112], [/\bflour\b/, 125],
+  [/corn ?starch/, 128], [/cocoa/, 85], [/cornmeal|polenta/, 150], [/rolled oats|\boats\b/, 90], [/\brice\b/, 185], [/quinoa/, 170], [/lentils/, 190],
+  [/butter(?! ?milk)/, 227], [/shortening/, 205], [/peanut butter|almond butter/, 258],
+  [/chocolate chips|chocolate chunks/, 170], [/shredded cheese|cheddar|mozzarella|monterey|colby|swiss/, 113], [/parmesan|pecorino/, 100],
+  [/walnuts|pecans|almonds|cashews|peanuts|\bnuts\b/, 120], [/raisins|cranberries/, 145], [/panko/, 60], [/breadcrumbs|bread crumbs/, 108],
+  [/coconut flakes|shredded coconut/, 85], [/cream cheese/, 232], [/honey/, 340], [/maple syrup/, 322], [/molasses|corn syrup/, 328]
+];
+const isLiquid = n => /\b(milk|water|cream|broth|stock|juice|buttermilk|wine|vinegar|oil|sauce|coffee|beer|yogurt|sour cream)\b/.test(n) && !/cream cheese|peanut butter/.test(n);
+const gPerCup = name => { const n = name.toLowerCase(); if (isLiquid(n)) return 0; for (const [re, g] of DENSITY) if (re.test(n)) return g; return 0; };
+const plural = (n, one, many) => n > 1.0001 ? many : one;
+// "big" = the largest amount in a range, so "2–3 lbs" becomes "0.9–1.4 kg", not "905 g–1.36 kg"
+function metricOut(v, kind, big = v){
+  const round = x => x < 10 ? String(Math.round(x * 2) / 2) : x < 100 ? String(Math.round(x)) : String(Math.round(x / 5) * 5);
+  if (big >= 1000) return [String(+(v / 1000).toFixed(2)), kind === "w" ? "kg" : "l"];
+  return [round(v), kind === "w" ? "g" : "ml"];
+}
+// kitchen-friendly amounts for converted values: 1.06 cups → "1", 0.44 cup → 7 tbsp
+function near(n){
+  const w = Math.floor(n), r = n - w;
+  for (const [f, s] of [[0, ""], [.25, "¼"], [1/3, "⅓"], [.5, "½"], [2/3, "⅔"], [.75, "¾"], [1, ""]])
+    if (Math.abs(r - f) <= (n < 1 ? .04 : .08)) { const ww = f === 1 ? w + 1 : w; return ((ww ? ww + (s ? " " : "") : "") + s) || null; }
+  return null;
+}
+function usVolume(ml){
+  const c = ml / 236.588, cs = c >= .24 && near(c);
+  if (cs) return [cs, /^(1|[¼⅓½⅔¾])$/.test(cs) ? "cup" : "cups"];
+  const t = ml / 14.7868;
+  if (t >= .9) { const ts = near(t) || String(Math.round(t)); return [ts, "tbsp"]; }
+  return [near(ml / 4.92892) || fnum(ml / 4.92892), "tsp"];
+}
+function usWeight(g){ if (g >= 453.592 * 0.95) { const lb = g / 453.592; const s = near(lb) || fnum(lb); return [s, s === "1" ? "lb" : "lbs"]; } return [near(g / 28.3495) || String(Math.round(g / 28.3495)), "oz"]; }
+// one amount + unit → text in the chosen system (or null if it should stay as written)
+function convAmount(vals, u, name, sys){
+  const [, kind, size, from] = u;
+  if (!sys || from === "s" || from === (sys === "us" ? "us" : "m")) return null;          // tsp / tbsp stay; already in that system
+  if (sys === "metric") {
+    const raw = vals.map(v => v * size);
+    if (kind === "v") {
+      const gc = gPerCup(name);
+      if (gc && size >= 236) { const gs = raw.map(ml => ml / 236.588 * gc); return gs.map(g => metricOut(g, "w", Math.max(...gs))); }   // cups of flour → grams
+      return raw.map(ml => metricOut(ml, "v", Math.max(...raw)));
+    }
+    return raw.map(g => metricOut(g, "w", Math.max(...raw)));
+  }
+  if (kind === "v") return vals.map(v => usVolume(v * size));
+  const gc = gPerCup(name);
+  if (gc) return vals.map(v => usVolume(v * size / gc * 236.588));   // grams of flour → cups
+  return vals.map(v => usWeight(v * size));
+}
+const joinAmt = (parts, dash) => parts.length > 1 && parts[0][1] === parts[1][1] ? parts[0][0] + dash + parts[1][0] + " " + parts[0][1] : parts.map(p => p.join(" ")).join(dash);
+// "(14 oz)" inside an ingredient, like "1 (14 oz) can tomatoes"
+function convInner(text, sys){
+  if (!sys) return esc(text);
+  return esc(text).replace(/\((\d+(?:\.\d+)?)[\s-]*([a-zA-Z. ]{1,14}?)\)/g, (all, n, unit) => {
+    const u = UNITS.find(x => x[0].test(unit.trim())); if (!u) return all;
+    const c = convAmount([+n], u, "", sys); return c ? `(<span class="scaled">${esc(joinAmt(c, ""))}</span>)` : all;
+  });
+}
+// an ingredient line, scaled by f and shown in the chosen units (HTML)
+function ingLine(line, f, sys = unitPref()){
+  const m = line.match(LEAD);
+  if (!m) return convInner(line, sys);
+  const a = pnum(m[2]), b = m[4] ? pnum(m[4]) : null;
+  if (!isFinite(a)) return convInner(line, sys);
+  const vals = [a * f].concat(b !== null && isFinite(b) ? [b * f] : []);
+  let rest = line.slice(m[0].length);
+  const sp = rest.match(/^\s*/)[0], after = rest.slice(sp.length);
+  const u = UNITS.find(x => x[0].test(after));
+  if (u) {
+    const um = after.match(u[0])[0], name = after.slice(um.length);
+    const c = convAmount(vals, u, name.replace(/^\s*(of\s+)?/i, ""), sys);
+    if (c) return esc(m[1]) + `<span class="scaled" title="${esc(m[0].trim() + " " + um)}">${esc(joinAmt(c, m[3] || "–"))}</span>` + convInner(name.replace(/^\s*of\b/i, ""), sys);
+  }
+  if (f === 1) return esc(m[1] + m[0].slice(m[1].length)) + convInner(rest, sys);
+  return esc(m[1]) + '<span class="scaled">' + esc(vals.map(fnum).join(m[3] || "–")) + "</span>" + convInner(rest, sys);
+}
+const ingText = (line, f, sys) => ingLine(line, f, sys).replace(/<[^>]+>/g, "").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+// oven temperatures in steps: 350°F ↔ 175°C (works on already-escaped HTML)
+function tempHtml(html, pref = tempPref()){
+  if (!pref) return html;
+  return html.replace(/(\d{2,3})(\s*(?:°|º|degrees?|deg\.?)(?:\s*(F|C|Fahrenheit|Celsius)\b)?|\s*(F|C)\b(?![a-z]))/gi, (all, n, tail, u1, u2) => {
+    const v = +n, u = (u1 || u2 || "").charAt(0).toUpperCase();
+    const from = u || (v >= 200 && v <= 550 ? "F" : "");                                  // "350 degrees" with no letter: an oven in °F
+    if (!from || from === pref) return all;
+    if (from === "F" && (v < 150 || v > 600)) return all;
+    if (from === "C" && (v < 60 || v > 300)) return all;
+    const out = pref === "C" ? Math.round((v - 32) * 5 / 9 / 5) * 5 : Math.round((v * 9 / 5 + 32) / 25) * 25;
+    return `<span class="scaled" title="${esc(all.trim())}">${out}°${pref}</span>`;
+  });
+}
+function unitsSeg(){
+  const v = unitPref();
+  return `<span class="useg" role="radiogroup" aria-label="Amounts">${[["", "As written"], ["us", "US"], ["metric", "Metric"]].map(([k, l]) => `<button role="radio" aria-checked="${v === k}" data-units="${k}">${l}</button>`).join("")}</span>`;
+}
 const baseServings = r => { const m = String(r.servings || "").match(/\d+/); return m ? +m[0] : null; };
 
 /* ---------- loading ---------- */
@@ -1029,6 +1177,7 @@ function renderList(){
 
 /* ---------- recipe detail ---------- */
 const ICON = {
+  print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 14h10v7H7z"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>',
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
@@ -1041,6 +1190,121 @@ const ICON = {
   timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>'
 };
 const cleanStep = l => l.replace(/^(step\s*)?\d+[.):]\s*/i, "");
+/* ---------- print / PDF ----------
+   Builds a clean one-recipe PDF in the phone (no server needed beyond loading the PDF maker
+   once). On iPhone it opens the Share sheet, which has Print, Save to Files, Mail and more.
+   Amounts, servings and temperatures match what's on screen. */
+async function loadJsPDF(){
+  if (window.jspdf) return window.jspdf.jsPDF;
+  await new Promise((ok, no) => { const s = document.createElement("script"); s.src = "/vendor/jspdf.js"; s.onload = ok; s.onerror = () => no(new Error("Couldn't load the PDF maker. Check your connection and try again.")); document.head.appendChild(s); });
+  return window.jspdf.jsPDF;
+}
+const WINANSI = new Set("€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ");
+const pdfText = s => String(s || "").replace(/(\d)\s*([⅓⅔⅛⅜⅝⅞])/g, "$1 $2").replace(/[⅓⅔⅛⅜⅝⅞]/g, c => ({ "⅓": "1/3", "⅔": "2/3", "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8" })[c])
+  .replace(/[\u2010-\u2012]/g, "-").replace(/\u00a0/g, " ").split("").filter(c => c.charCodeAt(0) < 256 || WINANSI.has(c)).join("").replace(/[ \t]+/g, " ").trim();
+async function photoData(src){
+  return new Promise(ok => {
+    const im = new Image(); im.crossOrigin = "anonymous"; im.referrerPolicy = "no-referrer";
+    im.onload = () => { try { const sc = Math.min(1, 900 / im.naturalWidth), c = document.createElement("canvas"); c.width = im.naturalWidth * sc; c.height = im.naturalHeight * sc;
+      c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); ok({ data: c.toDataURL("image/jpeg", .82), w: c.width, h: c.height }); } catch { ok(null); } };
+    im.onerror = () => ok(null); im.src = src; setTimeout(() => ok(null), 6000);
+  });
+}
+async function recipePdf(r){
+  const JsPDF = await loadJsPDF();
+  const doc = new JsPDF({ unit: "pt", format: "letter" });
+  const PW = doc.internal.pageSize.getWidth(), PH = doc.internal.pageSize.getHeight(), M = 54, W = PW - M * 2;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent-ink").trim() || "#b3261e";
+  const rgb = (() => { const m = accent.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); return m ? m.slice(1).map(x => parseInt(x, 16)) : [179, 38, 30]; })();
+  let y = M;
+  const room = hgt => { if (y + hgt > PH - M) { doc.addPage(); y = M; } };
+  const text = (str, size, opts = {}) => {
+    doc.setFont("helvetica", opts.bold ? "bold" : "normal"); doc.setFontSize(size); doc.setTextColor(...(opts.color || [30, 30, 30]));
+    const x = M + (opts.indent || 0), lines = doc.splitTextToSize(pdfText(str), W - (opts.indent || 0)), lh = size * 1.32;
+    lines.forEach((ln, i) => { room(lh); doc.text(ln, x, y + size); if (i === 0 && opts.marker) { doc.setTextColor(...rgb); doc.setFont("helvetica", "bold"); doc.text(opts.marker, M, y + size); doc.setTextColor(...(opts.color || [30, 30, 30])); doc.setFont("helvetica", opts.bold ? "bold" : "normal"); } y += lh; });
+  };
+  const heading = str => { y += 10; room(40); doc.setDrawColor(...rgb); doc.setLineWidth(2); doc.line(M, y, M + 26, y); y += 8; text(str.toUpperCase(), 11, { bold: true, color: rgb }); y += 4; };
+  // title + details
+  text(r.title || "Recipe", 24, { bold: true });
+  const f = S.scale, base = baseServings(r), total = (+r.prep_min || 0) + (+r.cook_min || 0);
+  const meta = [r.category, r.prep_min ? "Prep " + mins(r.prep_min) : "", r.cook_min ? "Cook " + mins(r.cook_min) : "", total && r.prep_min && r.cook_min ? "Total " + mins(total) : "",
+    base ? "Serves " + fnum(base * f) : r.servings ? "Makes " + r.servings : "", f !== 1 && !base ? "Scaled x" + fnum(f) : ""].filter(Boolean).join("  ·  ");
+  if (meta) { y += 2; text(meta, 10.5, { color: [100, 100, 100] }); }
+  // photo
+  const src = imgFor(r);
+  if (src) { const p = await photoData(src); if (p) { const w = Math.min(W, 300), h = Math.min(220, w * p.h / p.w), ww = h * p.w / p.h; y += 12; room(h); doc.addImage(p.data, "JPEG", M, y, ww, h); y += h + 4; } }
+  // ingredients
+  const ing = lines(r.ingredients);
+  if (ing.length) { heading("Ingredients");
+    ing.forEach(l => isHead(l) ? (y += 4, text(l.replace(/:$/, ""), 11.5, { bold: true })) : text(ingText(l.replace(/^[-*•▢□]\s*/, ""), f), 11.5, { indent: 16, marker: "•" })); }
+  // steps
+  const st = lines(r.steps);
+  if (st.length) { heading("Steps"); let n = 0;
+    st.forEach(l => { if (isHead(l)) { y += 4; text(l.replace(/:$/, ""), 11.5, { bold: true }); return; }
+      n++; text(tempHtml(esc(cleanStep(l))).replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"), 11.5, { indent: 22, marker: n + "." }); y += 5; }); }
+  if (r.notes) { heading("Notes"); String(r.notes).split("\n").filter(x => x.trim()).forEach(l => text(l, 11)); }
+  const nu = nutriOf(r);
+  if (nu) { heading(base ? "Nutrition per serving" : "Nutrition, whole recipe"); const per = v => base ? v / base : v;
+    text(NROWS.map(([label, k, unit]) => (k === "kcal" ? nFmt(per(nu.total[k] || 0), unit) + " calories" : label + " " + nFmt(per(nu.total[k] || 0), unit) + " " + unit)).join("   ·   "), 10.5);
+    text("Estimated from USDA FoodData Central.", 9, { color: [120, 120, 120] }); }
+  // footer on every page
+  const src2 = r.source_url ? "From " + (r.source_name || "") + " " + r.source_url : r.source_name ? "From " + r.source_name : "";
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(140, 140, 140);
+    doc.text(doc.splitTextToSize(pdfText(src2 || "Recipe Box"), W - 60)[0], M, PH - 28); doc.text(i + " / " + pages, PW - M, PH - 28, { align: "right" }); }
+  return doc;
+}
+async function sharePdf(r){
+  toast("Making the PDF…");
+  let doc; try { doc = await recipePdf(r); } catch (e) { return toast(e.message || "Couldn't make the PDF."); }
+  const name = (pdfText(r.title || "Recipe").replace(/[\\/:*?"<>|]+/g, "").slice(0, 60) || "Recipe") + ".pdf";
+  const file = new File([doc.output("blob")], name, { type: "application/pdf" });
+  window.PDF_LAST = file;
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: r.title }); return; } catch (e) { if (e && e.name === "AbortError") return; }
+  }
+  const url = URL.createObjectURL(file), link = document.createElement("a");
+  link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60e3);
+  toast("PDF saved. Open it to print");
+}
+
+/* ---------- nutrition ---------- */
+const NROWS = [["Calories", "kcal", ""], ["Protein", "protein", "g"], ["Carbs", "carbs", "g"], ["Fat", "fat", "g"], ["Fiber", "fiber", "g"], ["Sugar", "sugar", "g"], ["Sodium", "sodium", "mg"]];
+const nutriOf = r => { try { return r.nutrition ? JSON.parse(r.nutrition) : null; } catch { return null; } };
+const nFmt = (v, unit) => unit === "" || unit === "mg" || v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+function nutritionHtml(r){
+  const n = nutriOf(r), busy = S.nutriBusy === r.id;
+  const head = `<div class="sec-h"><h3>Nutrition</h3>${n && !busy ? `<button class="btn ghost" data-act="nutri">Recalculate</button>` : ""}</div>`;
+  if (busy) return `<section class="sec" id="nutrisec">${head}<p class="small muted"><span class="spinner"></span> Looking up each ingredient in the USDA food database…</p></section>`;
+  if (!n) return `<section class="sec" id="nutrisec">${head}<p class="small muted" style="margin:0 0 10px">Estimate calories, protein, carbs and more from the ingredients, using USDA food data.</p><button class="btn" data-act="nutri">Calculate nutrition</button></section>`;
+  const base = baseServings(r), per = v => base ? v / base : v;
+  const stale = (n.src || "") !== (r.ingredients || "");
+  const missed = n.items.filter(i => i.skip && i.skip !== "not counted");
+  return `<section class="sec" id="nutrisec">${head}
+    ${stale ? `<p class="nutri-warn">The ingredients changed since this was worked out. Tap Recalculate to update it.</p>` : ""}
+    <div class="nutri-k">${base ? `Per serving · makes ${base}` : "Whole recipe · add servings to see per serving"}</div>
+    <div class="nutri">${NROWS.map(([label, k, unit]) => `<div class="${k === "kcal" ? "big" : ""}"><b>${nFmt(per(n.total[k] || 0), unit)}<small>${unit}</small></b><span>${label}</span></div>`).join("")}</div>
+    ${base ? `<p class="small muted" style="margin:8px 0 0">Whole recipe: ${Math.round(n.total.kcal)} calories</p>` : ""}
+    ${missed.length ? `<p class="small muted" style="margin:6px 0 0">${missed.length} ${missed.length === 1 ? "ingredient" : "ingredients"} couldn't be matched and ${missed.length === 1 ? "isn't" : "aren't"} counted.</p>` : ""}
+    <details class="nutri-how"><summary>How this was worked out</summary>
+      <ul>${n.items.map(i => `<li><b>${esc(i.line)}</b><span>${i.skip ? ({ "not counted": "Not counted", "no match": "No match in the USDA database", "no amount": "Matched " + esc(i.food || "") + ", but the amount couldn't be worked out", pending: "Not looked up yet. Tap Recalculate" })[i.skip] || esc(i.skip)
+        : `${esc(i.food)} · ${i.g} g (${esc(i.how)}) · ${Math.round(i.kcal)} cal`}</span></li>`).join("")}</ul>
+      <p class="small muted">Estimates from USDA FoodData Central, matched automatically. Brands, cooking and exact sizes change the real numbers.</p>
+    </details></section>`;
+}
+async function calcNutrition(id){
+  S.nutriBusy = id; const y = window.scrollY; render(); window.scrollTo(0, y);
+  try {
+    for (let i = 0; i < 3; i++) {
+      const out = await api("/api/recipes/" + id + "/nutrition", { method: "POST", body: {} });
+      const r = S.recipes.find(x => x.id === id); if (r) r.nutrition = JSON.stringify(out.nutrition);
+      if (!out.nutrition.more) break;
+    }
+  } catch (e) { toast(e.message || "Couldn't work out nutrition right now."); }
+  S.nutriBusy = null;
+  if (S.view === "detail" && S.id === id) { const y2 = window.scrollY; render(); window.scrollTo(0, y2); }
+}
 function renderDetail(){
   const r = S.recipes.find(x => x.id === S.id);
   if (!r) { S.view = "list"; return render(); }
@@ -1052,11 +1316,11 @@ function renderDetail(){
   const scaleLabel = f === 1 ? (base ? `Serves ${base}` : "Original") : (base ? `Serves ${fnum(base * f)}` : `× ${fnum(f)}`);
   const isel = S.iSel;
   const ings = lines(r.ingredients).map((l,i) => isHead(l) ? `<li><span class="head">${esc(l.replace(/:$/,""))}</span></li>`
-    : isel ? `<li class="selrow ${isel.has(i) ? "on" : ""}" data-itoggle="${i}" role="checkbox" aria-checked="${isel.has(i)}" tabindex="0"><span class="selbox" aria-hidden="true"></span><span class="txt">${scaleLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></li>`
-    : `<li data-lp="i:${i}"><label><input class="check" type="checkbox" id="ing-${i}"><span>${scaleLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></label></li>`).join("");
+    : isel ? `<li class="selrow ${isel.has(i) ? "on" : ""}" data-itoggle="${i}" role="checkbox" aria-checked="${isel.has(i)}" tabindex="0"><span class="selbox" aria-hidden="true"></span><span class="txt">${ingLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></li>`
+    : `<li data-lp="i:${i}"><label><input class="check" type="checkbox" id="ing-${i}"><span>${ingLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></label></li>`).join("");
   const ingIdx = lines(r.ingredients).map((l,i) => isHead(l) ? -1 : i).filter(i => i >= 0);
   const allSel = isel && ingIdx.every(i => isel.has(i));
-  const steps = lines(r.steps).map(l => isHead(l) ? `<li class="head">${esc(l.replace(/:$/,""))}</li>` : `<li><span>${esc(cleanStep(l))}</span></li>`).join("");
+  const steps = lines(r.steps).map(l => isHead(l) ? `<li class="head">${esc(l.replace(/:$/,""))}</li>` : `<li><span>${tempHtml(esc(cleanStep(l)))}</span></li>`).join("");
   const nSteps = lines(r.steps).filter(l => !isHead(l)).length;
   const img = imgFor(r);
   const who = personName(r.added_by);
@@ -1068,20 +1332,22 @@ function renderDetail(){
     <div class="r-head">
       <div class="eyebrow">${esc(r.category || "Recipe")}${r.favorite ? " · ★ Favorite" : ""}</div>
       <h2>${esc(r.title)}</h2>
-      ${stats.length ? `<div class="stats">${stats.map(([k,v]) => `<div class="stat"><b>${esc(v)}</b><span>${k}</span></div>`).join("")}</div>` : ""}
+      ${stats.length ? `<div class="stats">${stats.map(([k,v]) => `<div class="stat ${String(v).length > 7 ? "long" : ""}"><b>${esc(v)}</b><span>${k}</span></div>`).join("")}</div>` : ""}
       ${nSteps ? `<button class="btn primary block big start" data-act="startcook">${ICON.play} Start cooking</button>` : ""}
       <div class="actions-bar">
         <button class="btn" data-act="togrocery">${ICON.cart} Groceries</button>
         <button class="btn" data-act="planpick">${ICON.cal} Meal plan</button>
+        <button class="btn" data-act="pdf">${ICON.print} Print · PDF</button>
       </div>
       ${S.planPick ? `<div class="inline-panel"><label for="planDay" class="small"><b>Which day?</b></label><select id="planDay" class="inp">${dayOpts}</select><div class="btn-row"><button class="btn primary" data-act="planadd">Add to plan</button><button class="btn ghost" data-act="planpick">Cancel</button></div></div>` : ""}
     </div>
     ${ings ? `<section class="sec" id="ingsec"><div class="sec-h"><h3>Ingredients</h3>${isel
         ? `<span class="btn-row"><button class="btn ghost" data-act="iselall">${allSel ? "Unselect all" : "Select all"}</button><button class="btn primary" data-act="iseldone">Done</button></span>`
-        : `<span class="scaler" aria-label="Scale recipe"><button data-act="scaledown" aria-label="Fewer servings">−</button><span>${esc(scaleLabel)}</span><button data-act="scaleup" aria-label="More servings">+</button></span>`}</div>
+        : `${unitsSeg()}<span class="scaler" aria-label="Scale recipe"><button data-act="scaledown" aria-label="Fewer servings">−</button><span>${esc(scaleLabel)}</span><button data-act="scaleup" aria-label="More servings">+</button></span>`}</div>
       ${isel ? `<p class="small muted" style="margin:-4px 0 8px">Tap the ingredients you need, then add them to the list below.</p>` : ""}<ul class="ing">${ings}</ul></section>` : ""}
     ${steps ? `<section class="sec"><div class="sec-h"><h3>Steps</h3><span class="count">${nSteps} ${nSteps===1?"step":"steps"}</span></div><ol class="steps">${steps}</ol></section>` : ""}
     ${r.notes ? `<section class="sec"><div class="sec-h"><h3>Notes</h3></div><div class="notes">${esc(r.notes)}</div></section>` : ""}
+    ${lines(r.ingredients).length && !isel ? nutritionHtml(r) : ""}
     ${isel ? `<div style="height:210px"></div>
     <div class="selbar" role="toolbar" aria-label="Selected ingredients">
       <div class="selbar-h"><b>${isel.size} selected · add to grocery list</b></div>
@@ -1205,7 +1471,7 @@ function renderCook(){
   let body = "";
   if (it.type === "gather") {
     const ings = lines(r.ingredients).map((l,i) => isHead(l) ? `<li><span class="head">${esc(l.replace(/:$/,""))}</span></li>`
-      : `<li><label><input class="check" type="checkbox" id="cg-${i}"><span>${scaleLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></label></li>`).join("");
+      : `<li><label><input class="check" type="checkbox" id="cg-${i}"><span>${ingLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></label></li>`).join("");
     const total = (+r.prep_min||0) + (+r.cook_min||0);
     body = `<div class="cook-inner cook-gather ${"enter" + (cook.dir < 0 ? " back" : "")}">
       <div><div class="eyebrow">Before you start</div><h2>Get everything out</h2>
@@ -1220,9 +1486,9 @@ function renderCook(){
     body = `<div class="cook-inner ${"enter" + (cook.dir < 0 ? " back" : "")}">
       ${it.section ? `<div class="cook-sec">${esc(it.section)}</div>` : ""}
       <div class="cook-step-n"><b>${stepNo}</b><span>of ${stepItems.length}</span></div>
-      <p class="cook-text">${text}</p>
+      <p class="cook-text">${tempHtml(text)}</p>
       ${tms.map(t => `<button class="tbtn" data-tstart="${t.secs}" data-tname="${esc(t.name || "Step " + stepNo)}" data-tstep="${stepNo}">${ICON.timer}<span>Start ${esc(t.short)} timer${t.name ? `<span class="tname">${esc(t.name)}</span>` : ""}</span></button>`).join("")}
-      ${used.length ? `<div class="cook-ings"><h4>For this step</h4>${used.map(l => `<div class="cook-ing"><span>${scaleLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></div>`).join("")}</div>` : ""}
+      ${used.length ? `<div class="cook-ings"><h4>For this step</h4>${used.map(l => `<div class="cook-ing"><span>${ingLine(l.replace(/^[-*•▢□]\s*/,""), f)}</span></div>`).join("")}</div>` : ""}
     </div>`;
   } else {
     body = `<div class="cook-done"><div class="big" aria-hidden="true">🍽️</div><h2>Time to eat</h2><p class="muted" style="margin:0">That's every step of ${esc(r.title)}.</p>
@@ -1559,10 +1825,10 @@ function renderGrocery(){
     const check = `<input class="check" type="checkbox" data-gcheck="${esc(g.id)}" ${g.checked?"checked":""} aria-label="${esc(g.text)}">`;
     // plain items: tapping the name ticks it. Linked items open the link; items with a photo show the photo.
     const body = g.link
-      ? `<label class="cbox">${check}</label><span class="txt"><a class="glink" href="${esc(g.link)}" target="_blank" rel="noopener">${esc(g.text)}${ICON.link}</a>${from}</span>`
+      ? `<label class="cbox">${check}</label><span class="txt"><a class="glink" href="${esc(g.link)}" target="_blank" rel="noopener">${ingLine(g.text, 1)}${ICON.link}</a>${from}</span>`
       : g.photo_id
-        ? `<label class="cbox">${check}</label><span class="txt"><button class="gname" data-gimg="${esc(g.id)}">${esc(g.text)}</button>${from}</span>`
-        : `<label>${check}<span class="txt">${esc(g.text)}${from}</span></label>`;
+        ? `<label class="cbox">${check}</label><span class="txt"><button class="gname" data-gimg="${esc(g.id)}">${ingLine(g.text, 1)}</button>${from}</span>`
+        : `<label>${check}<span class="txt">${ingLine(g.text, 1)}${from}</span></label>`;
     const img = g.photo_id ? `<button class="gimg" data-gimg="${esc(g.id)}" aria-label="Show photo">${ICON.img}</button>` : "";
     const li = `<li class="${g.checked?"done":""} ${g.link || g.photo_id ? "rich" : ""}" data-lp="g:${esc(g.id)}"><span class="who" aria-hidden="true"><b>${esc(S.people[g.added_by] || "Someone")}</b>${esc(whenText(g.created))}</span>${body}${img}<button class="stag ${g.store ? "" : "none"}" data-gpick="${esc(g.id)}" aria-label="Store, link and photo">${esc(g.store || "Any store")}</button><button class="x" data-gdel="${esc(g.id)}" aria-label="Remove">×</button></li>`;
     if (S.gPick !== g.id) return li;
@@ -1592,7 +1858,7 @@ function renderGrocery(){
     <div class="top"><div><div class="eyebrow">Shared list</div><h1>Groceries</h1>${syncLine()}</div>
       ${sel ? `<button class="btn primary" data-act="gseldone">Done</button>`
             : `<div class="top-r"><span class="count">${(S.gStore === "All" ? open.length : count(S.gStore))} to get</span>${S.grocery.length ? `<button class="btn" data-act="gselect">Edit</button>` : ""}</div>`}</div>
-    ${sel ? `<p class="small muted" style="margin:0 0 6px">Tap a name to fix it. Tap the circles to select items, then move or remove them below.</p>` : (S.grocery.length ? `<p class="hint" style="margin:0 0 4px">Swipe left on the list to see who added each item.</p>` : "")}
+    ${sel ? `<p class="small muted" style="margin:0 0 6px">Tap a name to fix it. Tap the circles to select items, then move or remove them below.</p>` : (S.grocery.length ? `<div class="g-units"><span class="small muted">Amounts</span>${unitsSeg()}</div><p class="hint" style="margin:0 0 4px">Swipe left on the list to see who added each item.</p>` : "")}
     <div class="chips" role="toolbar" aria-label="Show store" style="padding-top:0">
       <button class="chip" data-gstore="All" aria-pressed="${S.gStore === "All"}">All · ${open.length}</button>
       <button class="chip" data-gstore="" aria-pressed="${S.gStore === ""}">Any Store${count("") ? " · " + count("") : ""}</button>
@@ -1814,6 +2080,13 @@ function renderMeNow(){
       <div class="cook-h">Light or dark</div>
       <div class="seg3" role="group" aria-label="Light or dark">${[["auto","Auto"],["light","Light"],["dark","Dark"]].map(([k,l]) => `<button data-act="mode" data-mode="${k}" aria-pressed="${currentMode() === k}">${l}</button>`).join("")}</div>
       <p class="hint" style="margin:0">Auto follows your phone's light or dark setting. Each phone remembers its own choice.</p>`)}
+    ${sec("units", "Units", `Amounts: ${({ "": "as written", us: "US", metric: "Metric" })[unitPref()]} · Temperatures: ${({ "": "as written", F: "°F", C: "°C" })[tempPref()]}`, () => `
+      <div class="cook-h">Ingredient amounts</div>
+      <p class="small muted" style="margin:0 0 8px">Changes recipes, cooking mode and the grocery list. Recipes are saved exactly as written.</p>
+      ${unitsSeg()}
+      <div class="cook-h" style="margin-top:16px">Oven temperatures</div>
+      <p class="small muted" style="margin:0 0 8px">Changes temperatures in recipe steps and cooking mode.</p>
+      <span class="useg" role="radiogroup" aria-label="Temperatures">${[["", "As written"], ["F", "°F"], ["C", "°C"]].map(([k, l]) => `<button role="radio" aria-checked="${tempPref() === k}" data-temp="${k}">${l}</button>`).join("")}</span>`)}
     ${sec("sound", "Timer sound", (SOUNDS.find(x => x.id === currentSound()) || SOUNDS[0]).name, () => `
       <p class="small muted" style="margin:0">Tap a sound to hear it. It plays even with the ringer switch off, so turn your volume up.</p>
       <div class="sounds" role="radiogroup" aria-label="Timer sound">${SOUNDS.map(x => `<button class="soundpick" role="radio" data-act="sound" data-sound="${x.id}" aria-checked="${currentSound() === x.id}"><span class="dot"></span><span class="sn"><b>${esc(x.name)}</b><span>${esc(x.desc)}</span></span><span class="play" aria-hidden="true">▶</span></button>`).join("")}</div>
@@ -2049,6 +2322,11 @@ function longPress(key){
 })();
 
 app.addEventListener("click", async e => {
+  const ub = e.target.closest("[data-units],[data-temp]");
+  if (ub) {
+    try { if (ub.dataset.units !== undefined) localStorage.setItem("rb-units", ub.dataset.units); else localStorage.setItem("rb-temp", ub.dataset.temp); } catch {}
+    const y = window.scrollY; if (S.tab === "me") renderMe(); else render(); window.scrollTo(0, y); return;
+  }
   const t = e.target.closest("[data-act],[data-open],[data-fav],[data-cat],[data-favonly],[data-auth],[data-addday],[data-unplan],[data-gcheck],[data-gdel],[data-look],[data-mode],[data-font],[data-gpick],[data-gset],[data-gstore],[data-sup],[data-sdel],[data-gtoggle],[data-gselall],[data-gmove],[data-itoggle],[data-iadd],[data-resetfor],[data-acc],[data-gimg],[data-glink],[data-glinkrm],[data-gphotorm]");
   if (!t) return;
   const d = t.dataset;
@@ -2183,6 +2461,8 @@ app.addEventListener("click", async e => {
     else if (a === "impurl") importUrl();
     else if (a === "imptext") importText();
     else if (a === "tour") startTour(false);
+    else if (a === "nutri") { if (!S.nutriBusy) calcNutrition(S.id); }
+    else if (a === "pdf") { const r = S.recipes.find(x => x.id === S.id); if (r) sharePdf(r); }
     else if (a === "syncnow") { if (!S.syncing) syncNow(); }
     else if (a === "rmphoto") { snapshotForm(); S.pendingPhoto = null; S.removePhoto = true; renderEdit(); restoreForm(); }
     else if (a === "del") { snapshotForm(); S.confirmDel = true; renderEdit(); restoreForm(); }

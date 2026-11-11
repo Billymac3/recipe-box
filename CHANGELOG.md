@@ -8,6 +8,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
+| [4.0](#40--not-live-yet) | not live yet | — | US/Metric and °F/°C, nutrition, Print / PDF |
 | [3.9](#39--not-live-yet) | not live yet | — | First-time guided tour, replay from Me |
 | [3.8](#38--2026-11-10) | 2026-11-10 | [`38e70f0`](https://github.com/Billymac3/recipe-box/commit/38e70f0) | Pull down to refresh |
 | [3.7](#37--2026-11-10) | 2026-11-10 | [`3765615`](https://github.com/Billymac3/recipe-box/commit/3765615) | Live updates between phones, with last-updated line |
@@ -22,6 +23,85 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 | [2.1](#21--2026-10-26) | 2026-10-26 | [`a0e1197`](https://github.com/Billymac3/recipe-box/commit/a0e1197) | Any Store group, item links and photos |
 | [2.0](#20--2026-10-25) | 2026-10-25 | [`88f005f`](https://github.com/Billymac3/recipe-box/commit/88f005f) | New look, cooking mode, timers, stores, press-and-hold |
 | [1.0](#10--2026-10-21) | 2026-10-21 | before this repo | First version |
+
+---
+
+## 4.0 — not live yet
+
+**Why:** Billy asked for measurement conversion like Recime, a nutrition calculator, and print and PDF export for recipes. His choices:
+- **Units:** a US / Metric switch for ingredient amounts that also covers the grocery list. It's one setting for the whole app, quick to flip from a recipe or the grocery list. Temperatures don't follow that switch. They have their own long-term setting on the Me tab. No separate calculator tool.
+- **Nutrition:** from the USDA food database, showing per-serving basics.
+
+### What changed for people using the app
+**US / Metric amounts**
+- A three-way switch (**As written · US · Metric**) next to Ingredients on every recipe, above the grocery list, and in **Me → Units**. They're all the same setting, and it's saved on each phone, so each person picks their own.
+- It changes amounts on recipes, in cooking mode, on the grocery list and in PDFs. Recipes and list items are always saved exactly as written; only the display changes.
+- It works together with the servings scaler.
+- Cups of baking staples become grams, and back: flour, sugars, butter, cocoa, oats, rice, cheese, nuts, chocolate chips, honey and more. Liquids become ml or l, and weights become g or kg (or oz and lb).
+- Can sizes in brackets convert too: "1 (14 oz) can" becomes "1 (395 g) can". Ranges convert as well: "2–3 lbs" becomes "0.91–1.36 kg".
+- Teaspoons and tablespoons stay as they are, since metric recipes use them too. Count items like "2 large eggs" don't change.
+- Converted amounts are shown in the accent color, and pressing on one shows the original.
+- US amounts use kitchen-friendly measures, like "1 cup" for 250 ml and "7 tbsp" for 100 g butter, not "0.4 cup".
+
+**°F / °C**
+- **Me → Units → Oven temperatures: As written · °F · °C.** It converts temperatures in recipe steps, cooking mode and PDFs.
+  - °F to °C rounds to the nearest 5 (350°F → 175°C).
+  - °C to °F rounds to the nearest 25 (180°C → 350°F).
+- "350 degrees" with no letter is treated as °F when it's between 200 and 550. Other numbers, like minutes, are left alone.
+
+**Nutrition**
+- A **Nutrition** section on every recipe with ingredients. Tap **Calculate nutrition** to see:
+  - Calories, protein, carbs, fat, fiber, sugar and sodium per serving (or for the whole recipe if it has no servings)
+  - The whole-recipe calories
+  - How many ingredients couldn't be matched
+- **How this was worked out** lists every ingredient with the USDA food it matched, the grams used and its calories.
+- It's saved with the recipe for everyone in the household. If the ingredients are edited later, a note says to tap **Recalculate**.
+
+**Print / PDF**
+- A third button next to Groceries and Meal plan: **Print · PDF**. It makes a clean, letter-size PDF with:
+  - The title, details and photo
+  - Ingredients, numbered steps and notes
+  - Nutrition, if it's been worked out
+  - The source and page numbers
+- Amounts, servings and temperatures match what's on screen.
+- On iPhone it opens the Share sheet (Print, Save to Files, Messages, Mail…). On a computer it downloads the PDF.
+
+**Also**
+- The three action buttons now show their icon above the label, so they fit on small phones.
+- Long serving sizes like "24 cookies" no longer split in the middle of a word.
+- The privacy page now explains the nutrition lookup.
+
+### Technical details
+- **Units** (all in the app, `src/app.html`):
+  - `unitPref()` / `tempPref()` (`localStorage` `rb-units`, `rb-temp`) and a unit table with ml or g sizes.
+  - A grams-per-cup table for about 30 ingredients, with liquids kept as volume.
+  - `ingLine()` replaces `scaleLine()` for display.
+  - `ingText()` gives plain text for the PDF; the text sent to the grocery list stays as written.
+  - `tempHtml()` works on escaped step text.
+  - Tested on 25 sample lines and 6 steps, as written, US, metric and metric ×2.
+- **Nutrition** (server):
+  - `parseIng()` splits amount, unit (including cans, sticks, cloves, pinches, slices), bracketed sizes and food name.
+  - `usdaFood()` searches FoodData Central (Foundation + SR Legacy, 8 results), scores matches (main word, raw versus prepared, ignores baby food and restaurant items) and reads nutrients per 100 g by nutrient number.
+  - It reads USDA portion weights (cup, tbsp, tsp, piece) from the search result, or one detail call. If those aren't available, it falls back to typical cup and piece weights.
+  - **Shared cache:** new `nutri_cache` table, food lookups only, no household data. Misses are cached too.
+  - **Saved results:** new `recipes.nutrition` column holds `{ total, items, src }`, where `src` is used to spot edited ingredients.
+  - **Request limit:** at most 44 USDA requests per calculation, to stay under Cloudflare's 50-request limit per request. If more are needed, the app calls again (up to 3 times) and the cache fills in.
+  - New `POST /api/recipes/:id/nutrition`, household-scoped. Uses `USDA_API_KEY` (secret), or USDA's shared `DEMO_KEY` without it. `USDA_BASE` is only for testing.
+  - Tested against a stand-in USDA API:
+    - Ten sample lines matched correctly, using cup, tbsp/tsp, piece and weight conversions.
+    - Salt "to taste" and an unknown food were skipped.
+    - A second calculation made zero USDA calls (cached).
+    - The result was saved with the recipe, and signed-out requests were refused.
+- **PDF:**
+  - jsPDF 4.2.1 (MIT) is bundled in `src/vendor/`, served at `/vendor/jspdf.js` and cached by the service worker. It's loaded only when a PDF is made.
+  - Built with standard fonts. Characters they can't show are swapped (⅓ → 1/3) or dropped (emoji).
+  - The photo is redrawn as JPEG. Each page gets a footer with the source and "page / pages".
+  - Shared with `navigator.share({ files })`, with a download as the fallback.
+  - Tested: metric, °C, 1.5× servings and nutrition all appeared in the PDF. A 30-step recipe ran to 3 pages, with fractions and emoji handled.
+- Live updates: calculating nutrition counts as a recipe change, so other open phones get the result.
+- `APP_VERSION` is now 4.0. Version 3.9 (the guided tour) hasn't shipped yet and goes out with this.
+
+**Files:** `src/server.js`, `src/app.html`, `src/sw.js`, `src/privacy.html`, `src/vendor/jspdf-4.2.1.umd.min.js`, `src/vendor/jspdf-LICENSE.txt`, `build.py`, `build_preview.py`, `dist/worker.js`, `README.md`
 
 ---
 

@@ -39,6 +39,7 @@ self.addEventListener("fetch", e => {
     if (req.mode === "navigate") { e.respondWith(networkFirst(new Request("/"), SHELL).catch(() => caches.match("/"))); return; }
     if (/^\/api\/(me|recipes|grocery|plan)(\?|$)/.test(url.pathname + url.search.slice(0, 1))) { e.respondWith(networkFirst(req, DATA)); return; }
     if (url.pathname.startsWith("/photo/")) { e.respondWith(cacheFirst(req, PHOTOS)); return; }
+    if (url.pathname.startsWith("/vendor/")) { e.respondWith(cacheFirst(req, FONTS)); return; }
     return;
   }
   if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") e.respondWith(cacheFirst(req, FONTS));

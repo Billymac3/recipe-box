@@ -3,7 +3,8 @@
 // Workers AI (binding: AI). Each household's data is kept separate.
 // Secrets: INVITE_CODE (joins the first household), optional ADSENSE_CLIENT /
 // ADSENSE_SLOT (turn on the banner ad), optional GEMINI_API_KEY (Google's free AI,
-// tried before Workers AI) and GEMINI_MODELS (comma list to override the model order).
+// tried before Workers AI), GEMINI_MODELS (comma list to override the model order) and
+// USDA_API_KEY (free key from api.data.gov for nutrition).
 // OWNER_EMAIL (the only account that can see usage and run the admin tools).
 // Copyright (c) 2026 Billy McIntyre. All rights reserved. See LICENSE.
 // A Durable Object alarm (binding: TIMERS) wakes only when a cooking timer is due, and a
@@ -12,12 +13,14 @@ import { DurableObject } from "cloudflare:workers";
 
 const APP_HTML = __APP_HTML__;
 const SW_JS = __SW_JS__;
+// jsPDF 4.2.1 (MIT, see src/vendor/jspdf-LICENSE.txt), loaded by the app only when a PDF is made
+const JSPDF_JS = __JSPDF_JS__;
 const PRIVACY_HTML = __PRIVACY_HTML__;
 const ICON_180 = __ICON180__;
 const ICON_512 = __ICON512__;
 
 // Bump this with every release and add a matching entry to CHANGELOG in app.html.
-const APP_VERSION = "3.9";
+const APP_VERSION = "4.0";
 const CATS = ["Breakfast","Mains","Sides","Soups","Salads","Baking","Desserts","Drinks","Snacks","Other"];
 const TEXT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
@@ -57,7 +60,11 @@ const MIGRATIONS = [`ALTER TABLE grocery ADD COLUMN store TEXT`,
   `ALTER TABLE recipes ADD COLUMN image_credit TEXT`,
   `ALTER TABLE recipes ADD COLUMN image_credit_url TEXT`,
   // 3.9: first-time tour. Everyone who already has an account counts as done; new sign-ups get 0
-  `ALTER TABLE users ADD COLUMN tour_done INTEGER DEFAULT 1`];
+  `ALTER TABLE users ADD COLUMN tour_done INTEGER DEFAULT 1`,
+  // 4.0: nutrition from USDA FoodData Central. Food lookups are public data, so they're
+  // cached once for everyone; each recipe keeps its own result.
+  `ALTER TABLE recipes ADD COLUMN nutrition TEXT`,
+  `CREATE TABLE IF NOT EXISTS nutri_cache (q TEXT PRIMARY KEY, fdc_id INTEGER, name TEXT, per100 TEXT, portions TEXT, at INTEGER)`];
 // one-time move of everything from before 3.0 into the first household
 const BACKFILL = [
   `INSERT OR IGNORE INTO households (id, name, created) VALUES ('h1', 'Our household', strftime('%s','now') * 1000)`,
@@ -622,7 +629,21 @@ async function api(req, env, url, meta = {}) {
     if (!id) return err("A recipe needs a title.");
     return json({ recipe: await env.DB.prepare("SELECT * FROM recipes WHERE id = ?").bind(id).first() });
   }
-  let mt = p.match(/^\/api\/recipes\/([\w-]+)$/);
+  let mt = p.match(/^\/api\/recipes\/([\w-]+)\/nutrition$/);
+  if (mt && m === "POST") {
+    const r = await env.DB.prepare("SELECT id, ingredients FROM recipes WHERE id = ? AND household_id = ?").bind(mt[1], H).first();
+    if (!r) return err("That recipe isn't in your box.", 404);
+    let out;
+    try { out = await computeNutrition(env, r); }
+    catch (e) {
+      console.log("nutrition failed", e && e.message);
+      return err(e && e.message === "usda_limit" ? (env.USDA_API_KEY ? "The USDA food database is busy. Try again in a few minutes." : "Nutrition needs a free USDA key. The app owner can add it in Cloudflare (USDA_API_KEY).")
+        : "Couldn't reach the USDA food database. Try again in a minute.", 502);
+    }
+    await env.DB.prepare("UPDATE recipes SET nutrition = ? WHERE id = ? AND household_id = ?").bind(JSON.stringify(out), r.id, H).run();
+    return json({ nutrition: out });
+  }
+  mt = p.match(/^\/api\/recipes\/([\w-]+)$/);
   if (mt && m === "PUT") {
     const r = sanitizeRecipe(await body());
     if ("title" in r && !r.title) return err("A recipe needs a title.");
@@ -963,6 +984,135 @@ async function geminiStatus(env) {
   return { state: blocks.length === models.length ? "limit" : (st.state || "ready"), msg: st.msg || "", at: st.at || 0, resetAt: blocks.length === models.length ? Math.min(...blocks) : 0 };
 }
 
+/* ---------------- nutrition (USDA FoodData Central) ----------------
+   Each ingredient line is split into amount, unit and food, matched to a USDA food, turned
+   into grams, and added up. Uses the USDA_API_KEY secret (free from api.data.gov); without
+   it, USDA's shared DEMO_KEY is tried. */
+const NUTRI = { kcal: ["208", "957", "958"], protein: ["203"], fat: ["204"], carbs: ["205"], fiber: ["291"], sugar: ["269", "269.3"], sodium: ["307"] };
+const NUTRI_ID = { kcal: [1008, 2047, 2048], protein: [1003], fat: [1004], carbs: [1005], fiber: [1079], sugar: [2000, 1063], sodium: [1093] };
+const N_UNITS = [   // [pattern, kind, ml or g per unit, name]
+  [/^T\b\.?/, "v", 14.787, "tbsp"], [/^(teaspoons?|tsps?|t)\b\.?/i, "v", 4.929, "tsp"], [/^(tablespoons?|tbsps?|tbs|tbl)\b\.?/i, "v", 14.787, "tbsp"],
+  [/^(fl\.?\s*oz\.?|fluid\s+ounces?)/i, "v", 29.574, "fl oz"], [/^(cups?|c)\b\.?/i, "v", 236.59, "cup"], [/^(pints?|pts?)\b\.?/i, "v", 473.18, "pint"],
+  [/^(quarts?|qts?)\b\.?/i, "v", 946.35, "quart"], [/^(gallons?|gal)\b\.?/i, "v", 3785.4, "gallon"], [/^(ounces?|oz)\b\.?/i, "w", 28.35, "oz"],
+  [/^(pounds?|lbs?)\b\.?/i, "w", 453.59, "lb"], [/^(millilit(?:er|re)s?|ml)\b\.?/i, "v", 1, "ml"], [/^(lit(?:er|re)s?|l)\b\.?/i, "v", 1000, "l"],
+  [/^(kilograms?|kgs?)\b\.?/i, "w", 1000, "kg"], [/^(grams?|gr|g)\b\.?/i, "w", 1, "g"],
+  [/^(pinch(?:es)?|dash(?:es)?)\b/i, "w", 0.4, "pinch"], [/^(cloves?)\b/i, "w", 3, "clove"], [/^(sticks?)\b/i, "w", 113, "stick"],
+  [/^(cans?|tins?)\b/i, "w", 400, "can"], [/^(packages?|pkgs?|packets?)\b/i, "w", 225, "package"], [/^(slices?)\b/i, "c", 25, "slice"],
+  [/^(bunch(?:es)?)\b/i, "w", 100, "bunch"], [/^(heads?)\b/i, "c", 300, "head"], [/^(sprigs?)\b/i, "w", 1, "sprig"], [/^(handfuls?)\b/i, "w", 30, "handful"],
+  [/^(jars?)\b/i, "w", 450, "jar"], [/^(bottles?)\b/i, "w", 500, "bottle"]
+];
+const G_PER_CUP = [[/powdered sugar|confectioners/, 120], [/brown sugar/, 213], [/sugar/, 200], [/almond flour/, 96], [/flour/, 125], [/corn ?starch/, 128], [/cocoa/, 85],
+  [/oats/, 90], [/rice/, 185], [/quinoa/, 170], [/butter(?! ?milk)/, 227], [/peanut butter/, 258], [/oil/, 218], [/honey|syrup|molasses/, 330], [/chocolate chips/, 170],
+  [/cheese/, 113], [/nuts|walnuts|pecans|almonds/, 120], [/breadcrumbs|panko/, 90], [/raisins/, 145], [/spinach|lettuce|greens|kale|arugula/, 30], [/berries|blueberries|strawberries/, 150]];
+const PIECE_G = [[/\begg/, 50], [/onion/, 110], [/garlic/, 3], [/lemon/, 85], [/lime/, 65], [/potato/, 170], [/sweet potato/, 130], [/carrot/, 60], [/celery/, 40],
+  [/tomato/, 120], [/bell pepper|pepper\b/, 120], [/jalape/, 14], [/banana/, 118], [/apple/, 180], [/avocado/, 150], [/chicken breast/, 175], [/chicken thigh/, 115],
+  [/tortilla/, 45], [/zucchini/, 200], [/cucumber/, 300], [/shallot/, 45], [/orange/, 140], [/bread|bun|roll/, 30]];
+const N_DROP = /\b(chopped|diced|minced|sliced|grated|shredded|crushed|softened|melted|packed|divided|finely|roughly|coarsely|thinly|freshly|fresh|large|medium|small|whole|ground(?! (beef|turkey|pork|chicken|lamb))|room temperature|to taste|optional|for garnish|for serving|plus more|about|approximately|heaping|level|boneless|skinless|peeled|cubed|rinsed|drained|cooked|uncooked|of)\b/gi;
+const NUMRE = "(\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?\\s*[¼½¾⅓⅔⅛]|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛])";
+const FRAC = { "¼": .25, "½": .5, "¾": .75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": .125 };
+function nnum(x) {
+  x = String(x).trim(); let m;
+  if ((m = x.match(/^(\d+)\s+(\d+)\/(\d+)$/))) return +m[1] + m[2] / m[3];
+  if ((m = x.match(/^(\d+)\/(\d+)$/))) return m[1] / m[2];
+  if ((m = x.match(/^(\d+(?:\.\d+)?)\s*([¼½¾⅓⅔⅛])$/))) return +m[1] + FRAC[m[2]];
+  return FRAC[x] !== undefined ? FRAC[x] : parseFloat(x);
+}
+// "1 (14 oz) can diced tomatoes, drained" → { qty: 14, unit: oz, food: "diced tomatoes" }
+function parseIng(line) {
+  let s = String(line).replace(/^[-*•▢□\s]+/, "").trim();
+  if (!s || /:$/.test(s)) return null;
+  const lead = s.match(new RegExp("^" + NUMRE + "(?:\\s*(?:-|–|to)\\s*" + NUMRE + ")?"));
+  let qty = null;
+  if (lead) { const a = nnum(lead[1]), b = lead[2] ? nnum(lead[2]) : null; qty = b ? (a + b) / 2 : a; s = s.slice(lead[0].length).trim(); }
+  const inner = s.match(new RegExp("^\\(\\s*" + NUMRE + "[\\s-]*([a-zA-Z. ]{1,12})\\)\\s*"));
+  let unit = null;
+  if (inner) { const u = N_UNITS.find(x => x[0].test(inner[2].trim())); if (u && (u[1] === "w" || u[1] === "v")) { qty = (qty || 1) * nnum(inner[1]); unit = u; } s = s.slice(inner[0].length); }
+  const u2 = N_UNITS.find(x => x[0].test(s));
+  if (u2) { const um = s.match(u2[0])[0]; s = s.slice(um.length).trim(); if (!unit) unit = u2; else if (u2[1] === "c") {} }
+  const food = s.split(/,|\(| - | – /)[0].replace(N_DROP, " ").replace(/[^a-zA-Z' -]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  return { qty, unit, food };
+}
+const pick = (list, re) => { const n = String(re).toLowerCase(); for (const [r, g] of list) if (r.test(n)) return g; return 0; };
+function usdaUrl(env, path) {
+  const base = env.USDA_BASE || "https://api.nal.usda.gov";
+  return base + path + (path.includes("?") ? "&" : "?") + "api_key=" + encodeURIComponent(env.USDA_API_KEY || "DEMO_KEY");
+}
+function readNutrients(list) {
+  const out = {};
+  for (const [k, nums] of Object.entries(NUTRI)) {
+    const hit = (list || []).find(n => (nums.includes(String(n.nutrientNumber || (n.nutrient && n.nutrient.number) || "")) || NUTRI_ID[k].includes(n.nutrientId || (n.nutrient && n.nutrient.id)))
+      && !/kj/i.test(n.unitName || (n.nutrient && n.nutrient.unitName) || ""));
+    out[k] = hit ? +(hit.value != null ? hit.value : hit.amount) || 0 : 0;
+  }
+  return out;
+}
+// one food: search USDA once, remember it for everyone
+async function usdaFood(env, food, budget) {
+  const q = food.slice(0, 80);
+  const hit = await env.DB.prepare("SELECT * FROM nutri_cache WHERE q = ?").bind(q).first();
+  if (hit) return hit.fdc_id ? { fdcId: hit.fdc_id, name: hit.name, per100: JSON.parse(hit.per100), portions: JSON.parse(hit.portions || "[]") } : null;
+  if (budget.left <= 0) throw new Error("budget");
+  budget.left--;
+  const r = await fetch(usdaUrl(env, "/fdc/v1/foods/search?query=" + encodeURIComponent(q) + "&dataType=" + encodeURIComponent("Foundation,SR Legacy") + "&pageSize=8"));
+  if (r.status === 429 || r.status === 403) throw new Error("usda_limit");
+  if (!r.ok) throw new Error("usda " + r.status);
+  const foods = (await r.json()).foods || [];
+  const words = q.split(" ").filter(w => w.length > 2), main = (words[words.length - 1] || q).replace(/(ies)$/, "y").replace(/(es|s)$/, "");
+  const score = f => { const d = String(f.description || "").toLowerCase(), first = d.split(",")[0];
+    return (first.includes(main) ? 4 : d.includes(main) ? 2 : 0) + words.filter(w => d.includes(w.replace(/s$/, ""))).length
+      + (/\braw\b/.test(d) && !/\b(sauce|broth|stock|cheese|flour|sugar|oil|butter|milk)\b/.test(q) ? 1 : 0)
+      - (/babyfood|infant|fast food|restaurant|formula|imitation/.test(d) ? 5 : 0); };
+  const best = foods.map(f => [score(f), f]).sort((a, b) => b[0] - a[0])[0];
+  if (!best || best[0] < 2) { await env.DB.prepare("INSERT OR REPLACE INTO nutri_cache (q, fdc_id, at) VALUES (?, NULL, ?)").bind(q, Date.now()).run(); return null; }
+  const f = best[1];
+  let portions = (f.foodMeasures || []).map(m => ({ t: String(m.disseminationText || m.measureUnitName || "").toLowerCase(), g: +m.gramWeight || 0 })).filter(x => x.g);
+  if (!portions.length && budget.left > 0) {
+    budget.left--;
+    try { const d = await (await fetch(usdaUrl(env, "/fdc/v1/food/" + f.fdcId))).json();
+      portions = (d.foodPortions || []).map(m => ({ t: [m.amount && m.amount !== 1 ? m.amount : "", (m.measureUnit && m.measureUnit.name !== "undetermined" ? m.measureUnit.name : ""), m.modifier || "", m.portionDescription || ""].join(" ").toLowerCase().replace(/\s+/g, " ").trim(), g: (+m.gramWeight || 0) / (+m.amount || 1) })).filter(x => x.g);
+    } catch {}
+  }
+  const per100 = readNutrients(f.foodNutrients);
+  await env.DB.prepare("INSERT OR REPLACE INTO nutri_cache (q, fdc_id, name, per100, portions, at) VALUES (?,?,?,?,?,?)").bind(q, f.fdcId, f.description, JSON.stringify(per100), JSON.stringify(portions), Date.now()).run();
+  return { fdcId: f.fdcId, name: f.description, per100, portions };
+}
+function gramsFor(p, food) {
+  const qty = p.qty == null ? null : p.qty;
+  const u = p.unit, port = name => (food.portions || []).find(x => new RegExp("\\b" + name + "\\b").test(x.t));
+  if (u && u[1] === "w") return [(qty || 1) * u[2], (qty || 1) + " " + u[3]];
+  if (u && u[1] === "v") {
+    const ml = (qty || 1) * u[2], cup = port("cups?"), tb = port("tbsp|tablespoons?"), ts = port("tsp|teaspoons?");
+    if (cup) return [ml / 236.59 * cup.g, "USDA cup weight"]; if (tb) return [ml / 14.787 * tb.g, "USDA tbsp weight"]; if (ts) return [ml / 4.929 * ts.g, "USDA tsp weight"];
+    const gc = pick(G_PER_CUP, p.food); return [gc ? ml / 236.59 * gc : ml, gc ? "typical cup weight" : "measured like water"];
+  }
+  if (qty == null) return [0, ""];
+  const each = (u && port(u[3])) || port("large|medium|whole|each|item|piece|fruit|egg|clove|breast|thigh|slice|tortilla|onion|potato|pepper|carrot|stalk");
+  if (each) return [qty * each.g, "USDA piece weight"];
+  const pg = pick(PIECE_G, p.food) || (u ? u[2] : 0);
+  return pg ? [qty * pg, "typical piece weight"] : [0, ""];
+}
+async function computeNutrition(env, recipe) {
+  const linesIn = String(recipe.ingredients || "").split("\n").map(x => x.trim()).filter(Boolean).slice(0, 60);
+  const budget = { left: 44 }, items = [], total = { kcal: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sugar: 0, sodium: 0 };
+  let more = false;
+  for (const line of linesIn) {
+    const p = parseIng(line);
+    if (!p || !p.food) continue;
+    if (/^(water|ice|ice water|salt and pepper|cooking spray|nonstick spray)$/.test(p.food) || (p.qty == null && /to taste|for garnish|optional|as needed/i.test(line))) { items.push({ line, skip: "not counted" }); continue; }
+    let food;
+    try { food = await usdaFood(env, p.food, budget); }
+    catch (e) { if (e.message === "budget") { more = true; items.push({ line, skip: "pending" }); continue; } throw e; }
+    if (!food) { items.push({ line, skip: "no match" }); continue; }
+    const [g, how] = gramsFor(p, food);
+    if (!g) { items.push({ line, food: food.name, skip: "no amount" }); continue; }
+    const it = { line, food: food.name, fdcId: food.fdcId, g: Math.round(g), how };
+    for (const k of Object.keys(total)) { const v = (food.per100[k] || 0) * g / 100; it[k] = v; total[k] += v; }
+    items.push(it);
+  }
+  const round = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, k === "sodium" || k === "kcal" ? Math.round(v) : Math.round(v * 10) / 10]));
+  return { v: 1, at: Date.now(), src: String(recipe.ingredients || ""), more, total: round(total), items: items.map(i => i.skip ? i : { ...i, ...round(Object.fromEntries(Object.keys(total).map(k => [k, i[k]]))) }) };
+}
+
 /* ---------------- screenshots ---------------- */
 const OCR_PROMPT = "Transcribe all of the text in this image exactly as written, top to bottom, one line per line. Include ingredient amounts exactly. Do not add anything else.";
 async function ocrImage(env, bytes) {
@@ -1172,6 +1322,7 @@ export default {
       }
       if (url.pathname === "/icon-180.png" || url.pathname === "/apple-touch-icon.png" || url.pathname === "/apple-touch-icon-precomposed.png") return pngResponse(ICON_180);
       if (url.pathname === "/icon-512.png") return pngResponse(ICON_512);
+      if (url.pathname === "/vendor/jspdf.js") return new Response(JSPDF_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=31536000, immutable" } });
       if (url.pathname === "/sw.js") return new Response(SW_JS.replace("__VERSION__", APP_VERSION), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
       if (url.pathname === "/ads.txt") {
         if (!env.ADSENSE_CLIENT) return new Response("Not found", { status: 404 });
