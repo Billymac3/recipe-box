@@ -8,8 +8,8 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 | Version | Went live | Commit | Headline |
 |---|---|---|---|
-| [4.0](#40--not-live-yet) | not live yet | — | US/Metric and °F/°C, nutrition, Print / PDF |
-| [3.9](#39--not-live-yet) | not live yet | — | First-time guided tour, replay from Me |
+| [4.0](#40--2026-11-10) | 2026-11-10 | [`be0b558`](https://github.com/Billymac3/recipe-box/commit/be0b558) | US/Metric and °F/°C, nutrition, Print / PDF |
+| [3.9](#39--2026-11-10) | 2026-11-10 | [`16c03fb`](https://github.com/Billymac3/recipe-box/commit/16c03fb) | First-time guided tour, replay from Me |
 | [3.8](#38--2026-11-10) | 2026-11-10 | [`38e70f0`](https://github.com/Billymac3/recipe-box/commit/38e70f0) | Pull down to refresh |
 | [3.7](#37--2026-11-10) | 2026-11-10 | [`3765615`](https://github.com/Billymac3/recipe-box/commit/3765615) | Live updates between phones, with last-updated line |
 | [3.6](#36--2026-10-27) | 2026-10-27 | [`1ffd335`](https://github.com/Billymac3/recipe-box/commit/1ffd335) | Find a photo removed |
@@ -26,7 +26,7 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
 
 ---
 
-## 4.0 — not live yet
+## 4.0 — 2026-11-10
 
 **Why:** Billy asked for measurement conversion like Recime, a nutrition calculator, and print and PDF export for recipes. His choices:
 - **Units:** a US / Metric switch for ingredient amounts that also covers the grocery list. It's one setting for the whole app, quick to flip from a recipe or the grocery list. Temperatures don't follow that switch. They have their own long-term setting on the Me tab. No separate calculator tool.
@@ -99,13 +99,13 @@ Every release of Recipe Box, newest first. Each version lists what changed for p
   - Shared with `navigator.share({ files })`, with a download as the fallback.
   - Tested: metric, °C, 1.5× servings and nutrition all appeared in the PDF. A 30-step recipe ran to 3 pages, with fractions and emoji handled.
 - Live updates: calculating nutrition counts as a recipe change, so other open phones get the result.
-- `APP_VERSION` is now 4.0. Version 3.9 (the guided tour) hasn't shipped yet and goes out with this.
+- `APP_VERSION` is now 4.0. Released together with 3.9 (the guided tour).
 
 **Files:** `src/server.js`, `src/app.html`, `src/sw.js`, `src/privacy.html`, `src/vendor/jspdf-4.2.1.umd.min.js`, `src/vendor/jspdf-LICENSE.txt`, `build.py`, `build_preview.py`, `dist/worker.js`, `README.md`
 
 ---
 
-## 3.9 — not live yet
+## 3.9 — 2026-11-10
 
 **Why:** Billy asked for a walkthrough for first-time users that shows how to use the app and the features that aren't obvious. He picked the spotlight style, showing automatically for new users plus a button on the Me tab to replay it. It covers adding recipes, hidden gestures, cooking and timers, and groceries, plan and sharing.
 
